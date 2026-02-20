@@ -1,0 +1,1079 @@
+import { useState, useRef, useCallback, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { motion } from 'framer-motion'
+import { useFrameStore, useAppConfig, useFilterStore } from '../stores'
+import { PhotoSlot } from '@shared/types'
+import { getSessionHistory, SessionHistoryItem } from '../lib/supabase'
+import styles from './AdminDashboard.module.css'
+
+type DragMode = 'move' | 'resize-se' | 'resize-sw' | 'resize-ne' | 'resize-nw' | 'rotate' | null
+
+function AdminDashboard(): JSX.Element {
+    const navigate = useNavigate()
+    const { frames, addFrame, updateFrame, deleteFrame, addSlot, updateSlot, deleteSlot, setActiveFrame, undo, redo } = useFrameStore()
+    const { config, updateConfig } = useAppConfig()
+    const { filters, addFilter, removeFilter } = useFilterStore()
+
+    const [activeTab, setActiveTab] = useState<'frames' | 'timers' | 'filters' | 'payment' | 'history'>('frames')
+    const [selectedFrameId, setSelectedFrameId] = useState<string | null>(frames[0]?.id || null)
+    const [draggedSlotId, setDraggedSlotId] = useState<string | null>(null)
+    const [dragMode, setDragMode] = useState<DragMode>(null)
+    const [dragStart, setDragStart] = useState({ x: 0, y: 0, slotX: 0, slotY: 0, slotW: 0, slotH: 0 })
+    const [selectedSlotId, setSelectedSlotId] = useState<string | null>(null)
+    const [canvasZoom, setCanvasZoom] = useState(1)
+    const [historyData, setHistoryData] = useState<SessionHistoryItem[]>([])
+    const [historyTotal, setHistoryTotal] = useState(0)
+    const [historyPage, setHistoryPage] = useState(0)
+    const [isLoadingHistory, setIsLoadingHistory] = useState(false)
+
+    const canvasRef = useRef<HTMLDivElement>(null)
+
+    const selectedFrame = frames.find(f => f.id === selectedFrameId)
+
+    // Handle mouse move on canvas for dragging and resizing
+    const handleCanvasMouseMove = useCallback((e: React.MouseEvent) => {
+        if (!draggedSlotId || !selectedFrame || !canvasRef.current || !dragMode) return
+
+        const rect = canvasRef.current.getBoundingClientRect()
+        const scaleX = selectedFrame.canvasWidth / rect.width
+        const scaleY = selectedFrame.canvasHeight / rect.height
+
+        const deltaX = (e.clientX - dragStart.x) * scaleX
+        const deltaY = (e.clientY - dragStart.y) * scaleY
+
+        if (dragMode === 'move') {
+            updateSlot(selectedFrame.id, draggedSlotId, {
+                x: Math.max(0, Math.min(dragStart.slotX + deltaX, selectedFrame.canvasWidth - 50)),
+                y: Math.max(0, Math.min(dragStart.slotY + deltaY, selectedFrame.canvasHeight - 50))
+            })
+        } else if (dragMode === 'resize-se') {
+            updateSlot(selectedFrame.id, draggedSlotId, {
+                width: Math.max(100, dragStart.slotW + deltaX),
+                height: Math.max(75, dragStart.slotH + deltaY)
+            })
+        } else if (dragMode === 'resize-sw') {
+            const newWidth = Math.max(100, dragStart.slotW - deltaX)
+            updateSlot(selectedFrame.id, draggedSlotId, {
+                x: dragStart.slotX + dragStart.slotW - newWidth,
+                width: newWidth,
+                height: Math.max(75, dragStart.slotH + deltaY)
+            })
+        } else if (dragMode === 'resize-ne') {
+            const newHeight = Math.max(75, dragStart.slotH - deltaY)
+            updateSlot(selectedFrame.id, draggedSlotId, {
+                y: dragStart.slotY + dragStart.slotH - newHeight,
+                width: Math.max(100, dragStart.slotW + deltaX),
+                height: newHeight
+            })
+        } else if (dragMode === 'resize-nw') {
+            const newWidth = Math.max(100, dragStart.slotW - deltaX)
+            const newHeight = Math.max(75, dragStart.slotH - deltaY)
+            updateSlot(selectedFrame.id, draggedSlotId, {
+                x: dragStart.slotX + dragStart.slotW - newWidth,
+                y: dragStart.slotY + dragStart.slotH - newHeight,
+                width: newWidth,
+                height: newHeight
+            })
+        } else if (dragMode === 'rotate') {
+            // Calculate rotation based on angle from slot center to mouse
+            const slot = selectedFrame.slots.find(s => s.id === draggedSlotId)
+            if (slot) {
+                const slotCenterX = (slot.x + slot.width / 2) / selectedFrame.canvasWidth * rect.width
+                const slotCenterY = (slot.y + slot.height / 2) / selectedFrame.canvasHeight * rect.height
+                const mouseX = e.clientX - rect.left
+                const mouseY = e.clientY - rect.top
+                const angle = Math.atan2(mouseY - slotCenterY, mouseX - slotCenterX) * (180 / Math.PI) + 90
+                updateSlot(selectedFrame.id, draggedSlotId, {
+                    rotation: Math.round(angle)
+                })
+            }
+        }
+    }, [draggedSlotId, selectedFrame, dragMode, dragStart, updateSlot])
+
+    // Handle canvas wheel for zoom
+    useEffect(() => {
+        const handleWheel = (e: WheelEvent) => {
+            if (e.ctrlKey && canvasRef.current?.contains(e.target as Node)) {
+                e.preventDefault()
+                const delta = e.deltaY > 0 ? -0.1 : 0.1
+                setCanvasZoom(prev => Math.max(0.25, Math.min(2, prev + delta)))
+            }
+        }
+        window.addEventListener('wheel', handleWheel, { passive: false })
+        return () => window.removeEventListener('wheel', handleWheel)
+    }, [])
+
+    // Handle keyboard shortcuts for undo/redo
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.ctrlKey && e.key === 'z' && !e.shiftKey) {
+                e.preventDefault()
+                undo()
+            } else if (e.ctrlKey && e.shiftKey && e.key === 'Z') {
+                e.preventDefault()
+                redo()
+            }
+        }
+        window.addEventListener('keydown', handleKeyDown)
+        return () => window.removeEventListener('keydown', handleKeyDown)
+    }, [undo, redo])
+
+    // Load session history when tab is active
+    useEffect(() => {
+        if (activeTab === 'history') {
+            loadHistory()
+        }
+    }, [activeTab, historyPage])
+
+    const loadHistory = async () => {
+        setIsLoadingHistory(true)
+        const result = await getSessionHistory({ limit: 20, offset: historyPage * 20 })
+        if ('data' in result) {
+            setHistoryData(result.data)
+            setHistoryTotal(result.total)
+        }
+        setIsLoadingHistory(false)
+    }
+
+    const exportToCSV = async () => {
+        // Fetch ALL records for export
+        const allResult = await getSessionHistory({ limit: 10000, offset: 0 })
+        if (!('data' in allResult) || allResult.data.length === 0) return
+
+        const headers = ['No', 'Session ID', 'Email', 'Print Count', 'Gallery URL', 'Date/Time']
+        const rows = allResult.data.map((item, index) => [
+            index + 1,
+            item.session_id || item.id,
+            item.email || '-',
+            item.print_count,
+            item.gallery_url || '-',
+            new Date(item.created_at).toLocaleString('id-ID')
+        ])
+
+        const csvContent = [headers, ...rows]
+            .map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+            .join('\n')
+
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+        const url = URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = url
+        link.download = `session_history_${new Date().toISOString().slice(0, 10)}.csv`
+        document.body.appendChild(link)
+        link.click()
+        document.body.removeChild(link)
+        URL.revokeObjectURL(url)
+    }
+
+    // Helper to get display number for a slot
+    // Non-duplicate slots are numbered sequentially (1, 2, 3...)
+    // Duplicate slots show the same number as their source slot
+    const getSlotDisplayNumber = useCallback((slot: PhotoSlot, _slotIndex: number): string => {
+        if (!selectedFrame) return '?'
+
+        // Find all non-duplicate slots
+        const nonDuplicateSlots = selectedFrame.slots.filter(s => !s.duplicateOfSlotId)
+
+        if (slot.duplicateOfSlotId) {
+            // This is a duplicate - find and return the source slot's sequential number
+            const sourceSlot = selectedFrame.slots.find(s => s.id === slot.duplicateOfSlotId)
+            if (sourceSlot) {
+                const sourceSequentialIndex = nonDuplicateSlots.findIndex(s => s.id === sourceSlot.id)
+                return `${sourceSequentialIndex + 1}`
+            }
+            return '?'
+        } else {
+            // This is a non-duplicate - find its position among non-duplicates
+            const sequentialIndex = nonDuplicateSlots.findIndex(s => s.id === slot.id)
+            return `${sequentialIndex + 1}`
+        }
+    }, [selectedFrame])
+
+    // Zoom controls
+    const handleZoomIn = () => setCanvasZoom(prev => Math.min(2, prev + 0.25))
+    const handleZoomOut = () => setCanvasZoom(prev => Math.max(0.25, prev - 0.25))
+    const handleZoomReset = () => setCanvasZoom(1)
+
+    // Handle mouse up - stop dragging/resizing
+    const handleCanvasMouseUp = useCallback(() => {
+        setDraggedSlotId(null)
+        setDragMode(null)
+    }, [])
+
+    // Handle rotation mouse down
+    const handleRotateMouseDown = useCallback((slotId: string, e: React.MouseEvent) => {
+        e.stopPropagation()
+        const slot = selectedFrame?.slots.find(s => s.id === slotId)
+        if (!slot) return
+
+        setDragStart({ x: e.clientX, y: e.clientY, slotX: slot.x, slotY: slot.y, slotW: slot.width, slotH: slot.height })
+        setDraggedSlotId(slotId)
+        setDragMode('rotate')
+        setSelectedSlotId(slotId)
+    }, [selectedFrame])
+
+    // Handle slot mouse down - start moving
+    const handleSlotMouseDown = useCallback((slotId: string, e: React.MouseEvent) => {
+        e.stopPropagation()
+        const slot = selectedFrame?.slots.find(s => s.id === slotId)
+        if (!slot) return
+
+        setDragStart({ x: e.clientX, y: e.clientY, slotX: slot.x, slotY: slot.y, slotW: slot.width, slotH: slot.height })
+        setDraggedSlotId(slotId)
+        setDragMode('move')
+        setSelectedSlotId(slotId)
+    }, [selectedFrame])
+
+    // Handle resize handle mouse down
+    const handleResizeMouseDown = useCallback((slotId: string, corner: 'se' | 'sw' | 'ne' | 'nw', e: React.MouseEvent) => {
+        e.stopPropagation()
+        const slot = selectedFrame?.slots.find(s => s.id === slotId)
+        if (!slot) return
+
+        setDragStart({ x: e.clientX, y: e.clientY, slotX: slot.x, slotY: slot.y, slotW: slot.width, slotH: slot.height })
+        setDraggedSlotId(slotId)
+        setDragMode(`resize-${corner}`)
+        setSelectedSlotId(slotId)
+    }, [selectedFrame])
+
+    // Handle frame upload
+    const handleFrameUpload = async (): Promise<void> => {
+        const result = await window.api.system.openFileDialog({
+            title: 'Select Frame Overlay',
+            filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg'] }]
+        })
+
+        if (result.success && result.data && result.data.length > 0) {
+            const filePath = result.data[0]
+            const frameId = addFrame({
+                name: `Frame ${frames.length + 1}`,
+                overlayPath: filePath,
+                slots: [],
+                canvasWidth: 1200,
+                canvasHeight: 1800
+            })
+            setSelectedFrameId(frameId)
+        }
+    }
+
+    // Handle filter upload
+    const handleFilterUpload = async (): Promise<void> => {
+        const result = await window.api.system.openFileDialog({
+            title: 'Select LUT Filter',
+            filters: [{ name: 'CUBE Files', extensions: ['cube', 'CUBE'] }]
+        })
+
+        if (result.success && result.data && result.data.length > 0) {
+            addFilter({
+                name: `Filter ${filters.length + 1}`,
+                cubePath: result.data[0]
+            })
+        }
+    }
+
+    // Add new slot
+    const handleAddSlot = (): void => {
+        if (selectedFrame) {
+            addSlot(selectedFrame.id, {
+                x: 50 + (selectedFrame.slots.length * 30),
+                y: 50 + (selectedFrame.slots.length * 30),
+                width: 350,
+                height: 250
+            })
+        }
+    }
+
+    // Delete selected slot
+    const handleDeleteSelectedSlot = (): void => {
+        if (selectedFrame && selectedSlotId) {
+            deleteSlot(selectedFrame.id, selectedSlotId)
+            setSelectedSlotId(null)
+        }
+    }
+
+    // Clear all slots
+    const handleClearAllSlots = (): void => {
+        if (selectedFrame && window.confirm('Are you sure you want to delete all slots?')) {
+            selectedFrame.slots.forEach(slot => {
+                deleteSlot(selectedFrame.id, slot.id)
+            })
+            setSelectedSlotId(null)
+        }
+    }
+
+    // Toggle frame as active (allows multiple active frames)
+    const handleSetActive = (): void => {
+        if (selectedFrame) {
+            const isActive = config.activeFrameIds.includes(selectedFrame.id)
+            if (isActive) {
+                // Remove from active frames
+                updateConfig({
+                    activeFrameIds: config.activeFrameIds.filter(id => id !== selectedFrame.id)
+                })
+            } else {
+                // Add to active frames
+                updateConfig({
+                    activeFrameIds: [...config.activeFrameIds, selectedFrame.id]
+                })
+            }
+            setActiveFrame(selectedFrame.id)
+        }
+    }
+
+    return (
+        <motion.div
+            className={styles.container}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+        >
+            {/* Header */}
+            <header className={styles.header}>
+                <button className={styles.backButton} onClick={() => navigate('/')}>
+                    ← Back
+                </button>
+                <h1>Admin Dashboard</h1>
+                <div className={styles.headerActions}>
+                    <button
+                        className={styles.primaryButton}
+                        onClick={handleSetActive}
+                        disabled={!selectedFrame}
+                    >
+                        Set as Active
+                    </button>
+                </div>
+            </header>
+
+            {/* Tabs */}
+            <nav className={styles.tabs}>
+                <button
+                    className={`${styles.tab} ${activeTab === 'frames' ? styles.active : ''}`}
+                    onClick={() => setActiveTab('frames')}
+                >
+                    🖼️ Frames
+                </button>
+                <button
+                    className={`${styles.tab} ${activeTab === 'timers' ? styles.active : ''}`}
+                    onClick={() => setActiveTab('timers')}
+                >
+                    ⏱️ Timers
+                </button>
+                <button
+                    className={`${styles.tab} ${activeTab === 'filters' ? styles.active : ''}`}
+                    onClick={() => setActiveTab('filters')}
+                >
+                    🎨 Filters
+                </button>
+                <button
+                    className={`${styles.tab} ${activeTab === 'payment' ? styles.active : ''}`}
+                    onClick={() => setActiveTab('payment')}
+                >
+                    💳 Payment
+                </button>
+                <button
+                    className={`${styles.tab} ${activeTab === 'history' ? styles.active : ''}`}
+                    onClick={() => setActiveTab('history')}
+                >
+                    📋 History
+                </button>
+            </nav>
+
+            {/* Content */}
+            <main className={styles.content}>
+                {activeTab === 'frames' && (
+                    <div className={styles.framesTab}>
+                        {/* Frame List */}
+                        <aside className={styles.frameList}>
+                            <div className={styles.listHeader}>
+                                <h3>Frames</h3>
+                                <button className={styles.addButton} onClick={handleFrameUpload}>
+                                    + Add
+                                </button>
+                            </div>
+
+                            <div className={styles.frameItems}>
+                                {frames.map(frame => (
+                                    <div
+                                        key={frame.id}
+                                        className={`${styles.frameItem} ${frame.id === selectedFrameId ? styles.selected : ''}`}
+                                        onClick={() => setSelectedFrameId(frame.id)}
+                                    >
+                                        <div className={styles.framePreview}>
+                                            <img src={`file://${frame.overlayPath}`} alt={frame.name} />
+                                        </div>
+                                        <div className={styles.frameInfo}>
+                                            <span className={styles.frameName}>{frame.name}</span>
+                                            <span className={styles.frameSlots}>{frame.slots.length} slots</span>
+                                        </div>
+                                        {config.activeFrameIds.includes(frame.id) && (
+                                            <span className={styles.activeBadge}>Active</span>
+                                        )}
+                                        <button
+                                            className={styles.deleteButton}
+                                            onClick={(e) => {
+                                                e.stopPropagation()
+                                                deleteFrame(frame.id)
+                                            }}
+                                        >
+                                            ×
+                                        </button>
+                                    </div>
+                                ))}
+
+                                {frames.length === 0 && (
+                                    <div className={styles.emptyState}>
+                                        <p>No frames yet</p>
+                                        <p>Upload a PNG overlay to get started</p>
+                                    </div>
+                                )}
+                            </div>
+                        </aside>
+
+                        {/* Canvas Editor */}
+                        <div className={styles.canvasEditor}>
+                            {selectedFrame ? (
+                                <>
+                                    <div className={styles.editorHeader}>
+                                        <input
+                                            className={styles.frameNameInput}
+                                            value={selectedFrame.name}
+                                            onChange={(e) => updateFrame(selectedFrame.id, { name: e.target.value })}
+                                        />
+                                        <div className={styles.canvasSize}>
+                                            <label>Canvas:</label>
+                                            <input
+                                                type="number"
+                                                value={selectedFrame.canvasWidth}
+                                                onChange={(e) => updateFrame(selectedFrame.id, { canvasWidth: parseInt(e.target.value) })}
+                                            />
+                                            <span>×</span>
+                                            <input
+                                                type="number"
+                                                value={selectedFrame.canvasHeight}
+                                                onChange={(e) => updateFrame(selectedFrame.id, { canvasHeight: parseInt(e.target.value) })}
+                                            />
+                                        </div>
+                                        <button className={styles.addSlotButton} onClick={handleAddSlot}>
+                                            + Add Photo Slot
+                                        </button>
+                                        {selectedFrame.slots.length > 0 && (
+                                            <button className={styles.clearSlotsButton} onClick={handleClearAllSlots}>
+                                                🗑️ Clear All
+                                            </button>
+                                        )}
+                                    </div>
+
+                                    {/* Zoom Controls */}
+                                    <div className={styles.zoomControls}>
+                                        <button onClick={handleZoomOut} title="Zoom Out">−</button>
+                                        <span className={styles.zoomLevel}>{Math.round(canvasZoom * 100)}%</span>
+                                        <button onClick={handleZoomIn} title="Zoom In">+</button>
+                                        <button onClick={handleZoomReset} title="Reset Zoom">↺</button>
+                                    </div>
+
+                                    <div className={styles.canvasWrapper}>
+                                        <div
+                                            ref={canvasRef}
+                                            className={styles.canvas}
+                                            style={{
+                                                aspectRatio: `${selectedFrame.canvasWidth} / ${selectedFrame.canvasHeight}`,
+                                                cursor: draggedSlotId ? 'grabbing' : 'default',
+                                                transform: `scale(${canvasZoom})`,
+                                                transformOrigin: 'center center'
+                                            }}
+                                            onMouseMove={handleCanvasMouseMove}
+                                            onMouseUp={handleCanvasMouseUp}
+                                            onMouseLeave={handleCanvasMouseUp}
+                                        >
+                                            {/* Frame overlay preview */}
+                                            <img
+                                                src={`file://${selectedFrame.overlayPath}`}
+                                                alt="Frame"
+                                                className={styles.frameOverlay}
+                                            />
+
+                                            {/* Photo slots */}
+                                            {selectedFrame.slots.map((slot, index) => (
+                                                <div
+                                                    key={slot.id}
+                                                    className={`${styles.slot} ${draggedSlotId === slot.id ? styles.dragging : ''} ${selectedSlotId === slot.id ? styles.selected : ''}`}
+                                                    style={{
+                                                        left: `${(slot.x / selectedFrame.canvasWidth) * 100}%`,
+                                                        top: `${(slot.y / selectedFrame.canvasHeight) * 100}%`,
+                                                        width: `${(slot.width / selectedFrame.canvasWidth) * 100}%`,
+                                                        height: `${(slot.height / selectedFrame.canvasHeight) * 100}%`,
+                                                        transform: `rotate(${slot.rotation}deg)`,
+                                                        cursor: dragMode === 'move' && draggedSlotId === slot.id ? 'grabbing' : 'grab'
+                                                    }}
+                                                    onMouseDown={(e) => handleSlotMouseDown(slot.id, e)}
+                                                >
+                                                    <span className={styles.slotNumber}>{getSlotDisplayNumber(slot, index)}</span>
+
+                                                    {/* Rotation handle at top center */}
+                                                    <div
+                                                        className={styles.rotateHandle}
+                                                        onMouseDown={(e) => handleRotateMouseDown(slot.id, e)}
+                                                        title="Drag to rotate"
+                                                    />
+
+                                                    {/* Delete button */}
+                                                    <button
+                                                        className={styles.deleteSlotButton}
+                                                        onClick={(e) => {
+                                                            e.stopPropagation()
+                                                            deleteSlot(selectedFrame.id, slot.id)
+                                                        }}
+                                                        title="Delete this slot"
+                                                    >
+                                                        ×
+                                                    </button>
+
+                                                    {/* Resize handles at corners */}
+                                                    <div
+                                                        className={`${styles.resizeHandle} ${styles.handleNW}`}
+                                                        onMouseDown={(e) => handleResizeMouseDown(slot.id, 'nw', e)}
+                                                    />
+                                                    <div
+                                                        className={`${styles.resizeHandle} ${styles.handleNE}`}
+                                                        onMouseDown={(e) => handleResizeMouseDown(slot.id, 'ne', e)}
+                                                    />
+                                                    <div
+                                                        className={`${styles.resizeHandle} ${styles.handleSW}`}
+                                                        onMouseDown={(e) => handleResizeMouseDown(slot.id, 'sw', e)}
+                                                    />
+                                                    <div
+                                                        className={`${styles.resizeHandle} ${styles.handleSE}`}
+                                                        onMouseDown={(e) => handleResizeMouseDown(slot.id, 'se', e)}
+                                                    />
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </>
+                            ) : (
+                                <div className={styles.noFrameSelected}>
+                                    <p>Select a frame to edit or upload a new one</p>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Slot Sidebar (Right Column) */}
+                        {selectedFrame && (
+                            <aside className={styles.slotSidebar}>
+                                <div className={styles.sidebarHeader}>
+                                    <h3>📁 Photo Slots</h3>
+                                    <span className={styles.slotCount}>{selectedFrame.slots.length} slots</span>
+                                </div>
+                                <div className={styles.slotListSidebar}>
+                                    {selectedFrame.slots.map((slot, index) => (
+                                        <div
+                                            key={slot.id}
+                                            className={`${styles.slotItemSidebar} ${selectedSlotId === slot.id ? styles.expanded : ''}`}
+                                            onClick={() => setSelectedSlotId(selectedSlotId === slot.id ? null : slot.id)}
+                                        >
+                                            <div className={styles.slotItemHeader}>
+                                                <span className={styles.slotIcon}>{selectedSlotId === slot.id ? '📂' : '📁'}</span>
+                                                <span className={styles.slotLabel}>Slot {getSlotDisplayNumber(slot, index)}</span>
+                                                <span className={styles.slotDimensions}>{Math.round(slot.width)}×{Math.round(slot.height)}</span>
+                                            </div>
+                                            {selectedSlotId === slot.id && (
+                                                <div className={styles.slotDetails}>
+                                                    <div className={styles.slotPropsGrid}>
+                                                        <label>
+                                                            X
+                                                            <input
+                                                                type="number"
+                                                                value={Math.round(slot.x)}
+                                                                onChange={(e) => updateSlot(selectedFrame.id, slot.id, { x: parseInt(e.target.value) || 0 })}
+                                                                onClick={(e) => e.stopPropagation()}
+                                                            />
+                                                        </label>
+                                                        <label>
+                                                            Y
+                                                            <input
+                                                                type="number"
+                                                                value={Math.round(slot.y)}
+                                                                onChange={(e) => updateSlot(selectedFrame.id, slot.id, { y: parseInt(e.target.value) || 0 })}
+                                                                onClick={(e) => e.stopPropagation()}
+                                                            />
+                                                        </label>
+                                                        <label>
+                                                            Width
+                                                            <input
+                                                                type="number"
+                                                                value={Math.round(slot.width)}
+                                                                onChange={(e) => updateSlot(selectedFrame.id, slot.id, { width: parseInt(e.target.value) || 100 })}
+                                                                onClick={(e) => e.stopPropagation()}
+                                                            />
+                                                        </label>
+                                                        <label>
+                                                            Height
+                                                            <input
+                                                                type="number"
+                                                                value={Math.round(slot.height)}
+                                                                onChange={(e) => updateSlot(selectedFrame.id, slot.id, { height: parseInt(e.target.value) || 75 })}
+                                                                onClick={(e) => e.stopPropagation()}
+                                                            />
+                                                        </label>
+                                                        <label className={styles.rotationLabel}>
+                                                            Rotation
+                                                            <input
+                                                                type="number"
+                                                                value={Math.round(slot.rotation)}
+                                                                onChange={(e) => updateSlot(selectedFrame.id, slot.id, { rotation: parseInt(e.target.value) || 0 })}
+                                                                onClick={(e) => e.stopPropagation()}
+                                                            />
+                                                            <span>°</span>
+                                                        </label>
+                                                        <label className={styles.duplicateLabel}>
+                                                            Duplicate Of
+                                                            <select
+                                                                value={slot.duplicateOfSlotId || ''}
+                                                                onChange={(e) => updateSlot(selectedFrame.id, slot.id, {
+                                                                    duplicateOfSlotId: e.target.value || undefined
+                                                                })}
+                                                                onClick={(e) => e.stopPropagation()}
+                                                            >
+                                                                <option value="">None (Take New Photo)</option>
+                                                                {selectedFrame.slots
+                                                                    .filter(s => s.id !== slot.id && !s.duplicateOfSlotId)
+                                                                    .map((s, i) => (
+                                                                        <option key={s.id} value={s.id}>
+                                                                            Slot {selectedFrame.slots.indexOf(s) + 1}
+                                                                        </option>
+                                                                    ))
+                                                                }
+                                                            </select>
+                                                        </label>
+                                                    </div>
+                                                    <button
+                                                        className={styles.deleteSlotBtn}
+                                                        onClick={(e) => {
+                                                            e.stopPropagation()
+                                                            deleteSlot(selectedFrame.id, slot.id)
+                                                            setSelectedSlotId(null)
+                                                        }}
+                                                    >
+                                                        🗑️ Delete Slot
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </div>
+                                    ))}
+                                    {selectedFrame.slots.length === 0 && (
+                                        <div className={styles.emptySlots}>
+                                            <p>No slots yet</p>
+                                            <p>Click "+ Add Photo Slot" to add</p>
+                                        </div>
+                                    )}
+                                </div>
+                            </aside>
+                        )}
+                    </div>
+                )
+                }
+
+                {
+                    activeTab === 'timers' && (
+                        <div className={styles.timersTab}>
+                            <div className={styles.timerCard}>
+                                <h3>🎚️ Enable Countdown Timer</h3>
+                                <p>Toggle the countdown timer during photo capture sessions</p>
+                                <div className={styles.timerToggle}>
+                                    <label className={styles.toggleSwitch}>
+                                        <input
+                                            type="checkbox"
+                                            checked={config.timerEnabled}
+                                            onChange={(e) => updateConfig({ timerEnabled: e.target.checked })}
+                                        />
+                                        <span className={styles.toggleSlider}></span>
+                                    </label>
+                                    <span className={styles.toggleLabel}>
+                                        {config.timerEnabled ? 'Timer Enabled' : 'Timer Disabled (Instant Capture)'}
+                                    </span>
+                                </div>
+                            </div>
+
+                            <div className={styles.timerCard}>
+                                <h3>⏱️ Countdown Duration</h3>
+                                <p>Time before photo capture (seconds)</p>
+                                <div className={styles.timerInput}>
+                                    <input
+                                        type="range"
+                                        min="3"
+                                        max="10"
+                                        value={config.countdownDuration}
+                                        onChange={(e) => updateConfig({ countdownDuration: parseInt(e.target.value) })}
+                                        disabled={!config.timerEnabled}
+                                    />
+                                    <span className={styles.timerValue}>{config.countdownDuration}s</span>
+                                </div>
+                            </div>
+
+                            <div className={styles.timerCard}>
+                                <h3>👁️ Preview Duration</h3>
+                                <p>Time to show captured photo (seconds)</p>
+                                <div className={styles.timerInput}>
+                                    <input
+                                        type="range"
+                                        min="1"
+                                        max="5"
+                                        value={config.previewDuration}
+                                        onChange={(e) => updateConfig({ previewDuration: parseInt(e.target.value) })}
+                                    />
+                                    <span className={styles.timerValue}>{config.previewDuration}s</span>
+                                </div>
+                            </div>
+
+                            <div className={styles.timerCard}>
+                                <h3>⏰ Session Timeout</h3>
+                                <p>Auto-reset session after inactivity (seconds)</p>
+                                <div className={styles.timerInput}>
+                                    <input
+                                        type="range"
+                                        min="30"
+                                        max="300"
+                                        step="30"
+                                        value={config.sessionTimeout}
+                                        onChange={(e) => updateConfig({ sessionTimeout: parseInt(e.target.value) })}
+                                    />
+                                    <span className={styles.timerValue}>{config.sessionTimeout}s</span>
+                                </div>
+                            </div>
+
+                            {/* Per-Session Timer Section */}
+                            <div className={styles.timerCard} style={{ gridColumn: '1 / -1' }}>
+                                <h3>🎯 Per-Page Session Timers</h3>
+                                <p>Enable countdown timers displayed at the top of each page</p>
+                                <div className={styles.timerToggle}>
+                                    <label className={styles.toggleSwitch}>
+                                        <input
+                                            type="checkbox"
+                                            checked={config.sessionTimerEnabled}
+                                            onChange={(e) => updateConfig({ sessionTimerEnabled: e.target.checked })}
+                                        />
+                                        <span className={styles.toggleSlider}></span>
+                                    </label>
+                                    <span className={styles.toggleLabel}>
+                                        {config.sessionTimerEnabled ? 'Session Timers Enabled' : 'Session Timers Disabled'}
+                                    </span>
+                                </div>
+                            </div>
+
+                            <div className={styles.timerCard}>
+                                <h3>🖼️ Frame Selection Timeout</h3>
+                                <p>Time limit for selecting a frame (seconds)</p>
+                                <div className={styles.timerInput}>
+                                    <input
+                                        type="range"
+                                        min="30"
+                                        max="180"
+                                        step="15"
+                                        value={config.frameSelectionTimeout}
+                                        onChange={(e) => updateConfig({ frameSelectionTimeout: parseInt(e.target.value) })}
+                                        disabled={!config.sessionTimerEnabled}
+                                    />
+                                    <span className={styles.timerValue}>{config.frameSelectionTimeout}s</span>
+                                </div>
+                            </div>
+
+                            <div className={styles.timerCard}>
+                                <h3>📸 Capture Session Timeout</h3>
+                                <p>Time limit for photo capture (seconds)</p>
+                                <div className={styles.timerInput}>
+                                    <input
+                                        type="range"
+                                        min="60"
+                                        max="300"
+                                        step="30"
+                                        value={config.captureTimeout}
+                                        onChange={(e) => updateConfig({ captureTimeout: parseInt(e.target.value) })}
+                                        disabled={!config.sessionTimerEnabled}
+                                    />
+                                    <span className={styles.timerValue}>{config.captureTimeout}s</span>
+                                </div>
+                            </div>
+
+                            <div className={styles.timerCard}>
+                                <h3>✨ Post Processing Timeout</h3>
+                                <p>Time limit for editing and sharing (seconds)</p>
+                                <div className={styles.timerInput}>
+                                    <input
+                                        type="range"
+                                        min="30"
+                                        max="180"
+                                        step="15"
+                                        value={config.postProcessingTimeout}
+                                        onChange={(e) => updateConfig({ postProcessingTimeout: parseInt(e.target.value) })}
+                                        disabled={!config.sessionTimerEnabled}
+                                    />
+                                    <span className={styles.timerValue}>{config.postProcessingTimeout}s</span>
+                                </div>
+                            </div>
+                        </div>
+                    )
+                }
+
+                {
+                    activeTab === 'filters' && (
+                        <div className={styles.filtersTab}>
+                            <div className={styles.filterHeader}>
+                                <h3>LUT Filters</h3>
+                                <button className={styles.addButton} onClick={handleFilterUpload}>
+                                    + Upload .CUBE
+                                </button>
+                            </div>
+
+                            <div className={styles.filterGrid}>
+                                {filters.map(filter => (
+                                    <div key={filter.id} className={styles.filterCard}>
+                                        <div className={styles.filterPreview}>
+                                            {filter.previewPath ? (
+                                                <img src={`file://${filter.previewPath}`} alt={filter.name} />
+                                            ) : (
+                                                <div className={styles.filterPlaceholder}>🎨</div>
+                                            )}
+                                        </div>
+                                        <span className={styles.filterName}>{filter.name}</span>
+                                        <button
+                                            className={styles.deleteButton}
+                                            onClick={() => removeFilter(filter.id)}
+                                        >
+                                            ×
+                                        </button>
+                                    </div>
+                                ))}
+
+                                {filters.length === 0 && (
+                                    <div className={styles.emptyState}>
+                                        <p>No filters uploaded</p>
+                                        <p>Upload .CUBE files for color grading</p>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )
+                }
+
+                {/* Payment Tab */}
+                {activeTab === 'payment' && (
+                    <div className={styles.timersTab}>
+                        <div className={styles.timerCard} style={{ gridColumn: '1 / -1' }}>
+                            <h3>💳 Payment Gateway</h3>
+                            <p>Enable QRIS payment before photo capture</p>
+                            <div className={styles.timerToggle}>
+                                <label className={styles.toggleSwitch}>
+                                    <input
+                                        type="checkbox"
+                                        checked={config.paymentEnabled}
+                                        onChange={(e) => updateConfig({ paymentEnabled: e.target.checked })}
+                                    />
+                                    <span className={styles.toggleSlider}></span>
+                                </label>
+                                <span className={styles.toggleLabel}>
+                                    {config.paymentEnabled ? 'Payment Required' : 'Payment Disabled (Free)'}
+                                </span>
+                            </div>
+                        </div>
+
+                        <div className={styles.timerCard}>
+                            <h3>💰 Session Price</h3>
+                            <p>Base price for 1 session (includes 1 4R print)</p>
+                            <div className={styles.timerInput}>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    step="1000"
+                                    value={config.sessionPrice}
+                                    onChange={(e) => updateConfig({ sessionPrice: parseInt(e.target.value) || 0 })}
+                                    disabled={!config.paymentEnabled}
+                                    style={{ width: '120px', padding: '8px', fontSize: '16px', borderRadius: '8px', border: '1px solid var(--color-border)' }}
+                                />
+                                <span className={styles.timerValue}>Rp {config.sessionPrice.toLocaleString('id-ID')}</span>
+                            </div>
+                        </div>
+
+                        <div className={styles.timerCard}>
+                            <h3>🖨️ Additional Print Price</h3>
+                            <p>Price per 2 additional prints</p>
+                            <div className={styles.timerInput}>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    step="1000"
+                                    value={config.additionalPrintPrice}
+                                    onChange={(e) => updateConfig({ additionalPrintPrice: parseInt(e.target.value) || 0 })}
+                                    disabled={!config.paymentEnabled}
+                                    style={{ width: '120px', padding: '8px', fontSize: '16px', borderRadius: '8px', border: '1px solid var(--color-border)' }}
+                                />
+                                <span className={styles.timerValue}>Rp {config.additionalPrintPrice.toLocaleString('id-ID')}</span>
+                            </div>
+                        </div>
+
+                        <div className={styles.timerCard}>
+                            <h3>⏱️ Payment Timeout</h3>
+                            <p>Time limit for payment (seconds)</p>
+                            <div className={styles.timerInput}>
+                                <input
+                                    type="range"
+                                    min="60"
+                                    max="600"
+                                    step="30"
+                                    value={config.paymentTimeout}
+                                    onChange={(e) => updateConfig({ paymentTimeout: parseInt(e.target.value) })}
+                                    disabled={!config.paymentEnabled}
+                                />
+                                <span className={styles.timerValue}>{config.paymentTimeout}s</span>
+                            </div>
+                        </div>
+
+                        <div className={styles.timerCard} style={{ gridColumn: '1 / -1' }}>
+                            <h3>🔑 Midtrans API Keys</h3>
+                            <p>Enter your Midtrans Sandbox/Production keys</p>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '12px' }}>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '14px', marginBottom: '4px', color: 'var(--color-text-secondary)' }}>Client Key</label>
+                                    <input
+                                        type="text"
+                                        value={config.midtransClientKey}
+                                        onChange={(e) => updateConfig({ midtransClientKey: e.target.value })}
+                                        placeholder="SB-Mid-client-xxx"
+                                        disabled={!config.paymentEnabled}
+                                        style={{ width: '100%', padding: '10px', fontSize: '14px', borderRadius: '8px', border: '1px solid var(--color-border)', background: 'var(--color-bg-tertiary)', color: 'white' }}
+                                    />
+                                </div>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '14px', marginBottom: '4px', color: 'var(--color-text-secondary)' }}>Server Key</label>
+                                    <input
+                                        type="password"
+                                        value={config.midtransServerKey}
+                                        onChange={(e) => updateConfig({ midtransServerKey: e.target.value })}
+                                        placeholder="SB-Mid-server-xxx"
+                                        disabled={!config.paymentEnabled}
+                                        style={{ width: '100%', padding: '10px', fontSize: '14px', borderRadius: '8px', border: '1px solid var(--color-border)', background: 'var(--color-bg-tertiary)', color: 'white' }}
+                                    />
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className={styles.timerCard} style={{ gridColumn: '1 / -1' }}>
+                            <h3>📝 Payment Instructions</h3>
+                            <p>Text shown to users during payment</p>
+                            <textarea
+                                value={config.paymentInstructions}
+                                onChange={(e) => updateConfig({ paymentInstructions: e.target.value })}
+                                disabled={!config.paymentEnabled}
+                                rows={4}
+                                style={{
+                                    width: '100%',
+                                    marginTop: '12px',
+                                    padding: '12px',
+                                    fontSize: '14px',
+                                    borderRadius: '8px',
+                                    border: '1px solid var(--color-border)',
+                                    background: 'var(--color-bg-tertiary)',
+                                    resize: 'vertical'
+                                }}
+                            />
+                        </div>
+                    </div>
+                )}
+
+                {/* History Tab */}
+                {activeTab === 'history' && (
+                    <div className={styles.historyTab}>
+                        <div className={styles.historyHeader}>
+                            <h3>📋 Session History Log</h3>
+                            <span className={styles.historyCount}>Total: {historyTotal} sessions</span>
+                            <button
+                                className={styles.addButton}
+                                onClick={loadHistory}
+                                disabled={isLoadingHistory}
+                            >
+                                🔄 Refresh
+                            </button>
+                            <button
+                                className={styles.addButton}
+                                onClick={exportToCSV}
+                                disabled={isLoadingHistory || historyTotal === 0}
+                            >
+                                📥 Export CSV
+                            </button>
+                        </div>
+
+                        {isLoadingHistory ? (
+                            <div className={styles.loadingState}>
+                                <div className={styles.spinner}></div>
+                                <p>Loading history...</p>
+                            </div>
+                        ) : historyData.length > 0 ? (
+                            <>
+                                <div className={styles.historyTable}>
+                                    <div className={styles.tableHeader}>
+                                        <span>Email</span>
+                                        <span>Prints</span>
+                                        <span>Gallery</span>
+                                        <span>Date/Time</span>
+                                    </div>
+                                    {historyData.map(item => (
+                                        <div key={item.id} className={styles.tableRow}>
+                                            <span className={styles.emailCell}>
+                                                {item.email || <em style={{ opacity: 0.5 }}>No email</em>}
+                                            </span>
+                                            <span className={styles.printCell}>
+                                                🖨️ {item.print_count}
+                                            </span>
+                                            <span className={styles.galleryCell}>
+                                                <a
+                                                    href={item.gallery_url}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className={styles.galleryLink}
+                                                >
+                                                    🔗 View
+                                                </a>
+                                            </span>
+                                            <span className={styles.dateCell}>
+                                                {new Date(item.created_at).toLocaleString('id-ID', {
+                                                    day: '2-digit',
+                                                    month: 'short',
+                                                    year: 'numeric',
+                                                    hour: '2-digit',
+                                                    minute: '2-digit'
+                                                })}
+                                            </span>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                {/* Pagination */}
+                                <div className={styles.pagination}>
+                                    <button
+                                        onClick={() => setHistoryPage(p => Math.max(0, p - 1))}
+                                        disabled={historyPage === 0}
+                                    >
+                                        ← Previous
+                                    </button>
+                                    <span>Page {historyPage + 1} of {Math.ceil(historyTotal / 20)}</span>
+                                    <button
+                                        onClick={() => setHistoryPage(p => p + 1)}
+                                        disabled={(historyPage + 1) * 20 >= historyTotal}
+                                    >
+                                        Next →
+                                    </button>
+                                </div>
+                            </>
+                        ) : (
+                            <div className={styles.emptyState} style={{ padding: '60px 20px' }}>
+                                <p>No session history yet</p>
+                                <p>Sessions will appear here after photos are taken</p>
+                            </div>
+                        )}
+                    </div>
+                )}
+            </main >
+        </motion.div >
+    )
+}
+
+export default AdminDashboard

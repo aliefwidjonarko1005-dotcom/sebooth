@@ -1,0 +1,360 @@
+import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
+import {
+    FrameConfig,
+    PhotoSlot,
+    CapturedPhoto,
+    SessionData,
+    AppConfig,
+    LUTFilter,
+    CameraDevice
+} from '@shared/types'
+import { v4 as uuidv4 } from 'uuid'
+
+// ================================
+// App Config Store
+// ================================
+interface AppConfigState {
+    config: AppConfig
+    updateConfig: (updates: Partial<AppConfig>) => void
+    resetConfig: () => void
+}
+
+const defaultConfig: AppConfig = {
+    countdownDuration: 5,
+    previewDuration: 2,
+    sessionTimeout: 120,
+    activeFrameIds: [],
+    timerEnabled: true,
+    // Per-session timeouts
+    frameSelectionTimeout: 60,
+    captureTimeout: 120,
+    postProcessingTimeout: 90,
+    sessionTimerEnabled: true,
+    // Payment Gateway
+    paymentEnabled: false,
+    sessionPrice: 25000, // IDR 25,000 base price
+    additionalPrintPrice: 5000, // IDR 5,000 per 2 additional prints
+    midtransClientKey: '',
+    midtransServerKey: '',
+    paymentInstructions: 'Scan QR code dengan aplikasi e-wallet atau mobile banking Anda. Pembayaran akan terkonfirmasi otomatis.',
+    paymentTimeout: 300 // 5 minutes
+}
+
+export const useAppConfig = create<AppConfigState>()(
+    persist(
+        (set) => ({
+            config: defaultConfig,
+            updateConfig: (updates) => set((state) => ({
+                config: { ...state.config, ...updates }
+            })),
+            resetConfig: () => set({ config: defaultConfig })
+        }),
+        {
+            name: 'sebooth-config',
+            // Merge persisted state with defaults to handle missing new fields
+            merge: (persistedState, currentState) => {
+                const persisted = persistedState as { config?: Partial<AppConfig> & { activeFrameId?: string } } | undefined
+                if (persisted?.config) {
+                    // Migrate old activeFrameId to activeFrameIds
+                    if ('activeFrameId' in persisted.config && persisted.config.activeFrameId) {
+                        persisted.config.activeFrameIds = [persisted.config.activeFrameId]
+                        delete persisted.config.activeFrameId
+                    }
+                }
+                return {
+                    ...currentState,
+                    config: {
+                        ...currentState.config,
+                        ...(persisted?.config || {})
+                    }
+                }
+            }
+        }
+    )
+)
+
+// ================================
+// Frame Config Store with Undo/Redo
+// ================================
+interface FrameState {
+    frames: FrameConfig[]
+    activeFrame: FrameConfig | null
+    // Undo/Redo history
+    history: FrameConfig[][]
+    future: FrameConfig[][]
+    addFrame: (frame: Omit<FrameConfig, 'id'>) => string
+    updateFrame: (id: string, updates: Partial<FrameConfig>) => void
+    deleteFrame: (id: string) => void
+    setActiveFrame: (id: string | null) => void
+    addSlot: (frameId: string, slot?: Partial<PhotoSlot>) => void
+    updateSlot: (frameId: string, slotId: string, updates: Partial<PhotoSlot>) => void
+    deleteSlot: (frameId: string, slotId: string) => void
+    // Undo/Redo actions
+    undo: () => void
+    redo: () => void
+    canUndo: () => boolean
+    canRedo: () => boolean
+}
+
+const MAX_HISTORY_SIZE = 50
+
+export const useFrameStore = create<FrameState>()(
+    persist(
+        (set, get) => {
+            // Helper to save current state to history before mutations
+            const saveToHistory = () => {
+                const { frames, history } = get()
+                const newHistory = [...history, JSON.parse(JSON.stringify(frames))]
+                // Limit history size
+                if (newHistory.length > MAX_HISTORY_SIZE) {
+                    newHistory.shift()
+                }
+                return { history: newHistory, future: [] }
+            }
+
+            return {
+                frames: [],
+                activeFrame: null,
+                history: [],
+                future: [],
+
+                addFrame: (frame) => {
+                    const id = uuidv4()
+                    set((state) => ({
+                        ...saveToHistory(),
+                        frames: [...state.frames, { ...frame, id }]
+                    }))
+                    return id
+                },
+
+                updateFrame: (id, updates) => set((state) => ({
+                    ...saveToHistory(),
+                    frames: state.frames.map(f => f.id === id ? { ...f, ...updates } : f),
+                    activeFrame: state.activeFrame?.id === id
+                        ? { ...state.activeFrame, ...updates }
+                        : state.activeFrame
+                })),
+
+                deleteFrame: (id) => set((state) => ({
+                    ...saveToHistory(),
+                    frames: state.frames.filter(f => f.id !== id),
+                    activeFrame: state.activeFrame?.id === id ? null : state.activeFrame
+                })),
+
+                setActiveFrame: (id) => {
+                    const frame = id ? get().frames.find(f => f.id === id) : null
+                    set({ activeFrame: frame || null })
+                },
+
+                addSlot: (frameId, slot) => {
+                    const newSlot: PhotoSlot = {
+                        id: uuidv4(),
+                        x: slot?.x ?? 100,
+                        y: slot?.y ?? 100,
+                        width: slot?.width ?? 400,
+                        height: slot?.height ?? 300,
+                        rotation: slot?.rotation ?? 0,
+                        duplicateOfSlotId: slot?.duplicateOfSlotId
+                    }
+
+                    set((state) => ({
+                        ...saveToHistory(),
+                        frames: state.frames.map(f =>
+                            f.id === frameId
+                                ? { ...f, slots: [...f.slots, newSlot] }
+                                : f
+                        )
+                    }))
+                },
+
+                updateSlot: (frameId, slotId, updates) => set((state) => ({
+                    ...saveToHistory(),
+                    frames: state.frames.map(f =>
+                        f.id === frameId
+                            ? {
+                                ...f,
+                                slots: f.slots.map(s => s.id === slotId ? { ...s, ...updates } : s)
+                            }
+                            : f
+                    )
+                })),
+
+                deleteSlot: (frameId, slotId) => set((state) => ({
+                    ...saveToHistory(),
+                    frames: state.frames.map(f =>
+                        f.id === frameId
+                            ? { ...f, slots: f.slots.filter(s => s.id !== slotId) }
+                            : f
+                    )
+                })),
+
+                // Undo: restore previous state
+                undo: () => set((state) => {
+                    if (state.history.length === 0) return state
+                    const previous = state.history[state.history.length - 1]
+                    const newHistory = state.history.slice(0, -1)
+                    return {
+                        frames: previous,
+                        history: newHistory,
+                        future: [JSON.parse(JSON.stringify(state.frames)), ...state.future]
+                    }
+                }),
+
+                // Redo: restore next state
+                redo: () => set((state) => {
+                    if (state.future.length === 0) return state
+                    const next = state.future[0]
+                    const newFuture = state.future.slice(1)
+                    return {
+                        frames: next,
+                        history: [...state.history, JSON.parse(JSON.stringify(state.frames))],
+                        future: newFuture
+                    }
+                }),
+
+                canUndo: () => get().history.length > 0,
+                canRedo: () => get().future.length > 0
+            }
+        },
+        {
+            name: 'sebooth-frames',
+            // Don't persist history/future to avoid large storage
+            partialize: (state) => ({ frames: state.frames, activeFrame: state.activeFrame })
+        }
+    )
+)
+
+// ================================
+// Session Store
+// ================================
+interface SessionState {
+    currentSession: SessionData | null
+    photos: CapturedPhoto[]
+    startSession: (frameId: string) => void
+    endSession: () => void
+    addPhoto: (slotId: string, imagePath: string, videoPath?: string) => void
+    updatePhoto: (slotId: string, updates: Partial<CapturedPhoto>) => void
+    removePhoto: (slotId: string) => void
+    setCompositePath: (path: string) => void
+    setEmail: (email: string) => void
+}
+
+export const useSessionStore = create<SessionState>((set) => ({
+    currentSession: null,
+    photos: [],
+
+    startSession: (frameId) => set({
+        currentSession: {
+            id: uuidv4(),
+            frameId,
+            photos: [],
+            createdAt: Date.now()
+        },
+        photos: []
+    }),
+
+    endSession: () => set({
+        currentSession: null,
+        photos: []
+    }),
+
+    addPhoto: (slotId, imagePath, videoPath) => set((state) => {
+        const newPhoto: CapturedPhoto = {
+            slotId,
+            imagePath,
+            timestamp: Date.now(),
+            videoPath
+        }
+        return {
+            photos: [...state.photos.filter(p => p.slotId !== slotId), newPhoto]
+        }
+    }),
+
+    updatePhoto: (slotId, updates) => set((state) => ({
+        photos: state.photos.map(p =>
+            p.slotId === slotId ? { ...p, ...updates } : p
+        )
+    })),
+
+    removePhoto: (slotId) => set((state) => ({
+        photos: state.photos.filter(p => p.slotId !== slotId)
+    })),
+
+    setCompositePath: (path) => set((state) => ({
+        currentSession: state.currentSession
+            ? { ...state.currentSession, compositePath: path }
+            : null
+    })),
+
+    setEmail: (email) => set((state) => ({
+        currentSession: state.currentSession
+            ? { ...state.currentSession, email }
+            : null
+    }))
+}))
+
+// ================================
+// Camera Store
+// ================================
+interface CameraState {
+    cameras: CameraDevice[]
+    selectedCamera: CameraDevice | null
+    isConnected: boolean
+    isCapturing: boolean
+    setCameras: (cameras: CameraDevice[]) => void
+    selectCamera: (camera: CameraDevice | null) => void
+    setConnected: (connected: boolean) => void
+    setCapturing: (capturing: boolean) => void
+}
+
+export const useCameraStore = create<CameraState>((set) => ({
+    cameras: [],
+    selectedCamera: null,
+    isConnected: false,
+    isCapturing: false,
+
+    setCameras: (cameras) => set({ cameras }),
+    selectCamera: (camera) => set({ selectedCamera: camera }),
+    setConnected: (connected) => set({ isConnected: connected }),
+    setCapturing: (capturing) => set({ isCapturing: capturing })
+}))
+
+// ================================
+// Filter Store
+// ================================
+interface FilterState {
+    filters: LUTFilter[]
+    activeFilter: LUTFilter | null
+    addFilter: (filter: Omit<LUTFilter, 'id'>) => string
+    removeFilter: (id: string) => void
+    setActiveFilter: (id: string | null) => void
+}
+
+export const useFilterStore = create<FilterState>()(
+    persist(
+        (set, get) => ({
+            filters: [],
+            activeFilter: null,
+
+            addFilter: (filter) => {
+                const id = uuidv4()
+                set((state) => ({
+                    filters: [...state.filters, { ...filter, id }]
+                }))
+                return id
+            },
+
+            removeFilter: (id) => set((state) => ({
+                filters: state.filters.filter(f => f.id !== id),
+                activeFilter: state.activeFilter?.id === id ? null : state.activeFilter
+            })),
+
+            setActiveFilter: (id) => {
+                const filter = id ? get().filters.find(f => f.id === id) : null
+                set({ activeFilter: filter || null })
+            }
+        }),
+        { name: 'sebooth-filters' }
+    )
+)

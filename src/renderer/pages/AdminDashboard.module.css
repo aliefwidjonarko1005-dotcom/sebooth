@@ -1,0 +1,1163 @@
+.container {
+    width: 100%;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    background: var(--color-bg-primary);
+}
+
+/* Header */
+.header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--spacing-md) var(--spacing-xl);
+    background: var(--color-bg-secondary);
+    border-bottom: 1px solid var(--color-border);
+}
+
+.header h1 {
+    font-size: var(--font-size-xl);
+    font-weight: 600;
+}
+
+.backButton {
+    padding: var(--spacing-sm) var(--spacing-md);
+    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
+    background: transparent;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.backButton:hover {
+    color: var(--color-text-primary);
+    border-color: var(--color-border-hover);
+}
+
+.headerActions {
+    display: flex;
+    gap: var(--spacing-sm);
+}
+
+.primaryButton {
+    padding: var(--spacing-sm) var(--spacing-lg);
+    font-weight: 600;
+    color: white;
+    background: var(--gradient-primary);
+    border-radius: var(--radius-md);
+    transition: opacity var(--transition-fast);
+}
+
+.primaryButton:hover {
+    opacity: 0.9;
+}
+
+.primaryButton:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Tabs */
+.tabs {
+    display: flex;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-md) var(--spacing-xl);
+    background: var(--color-bg-secondary);
+    border-bottom: 1px solid var(--color-border);
+}
+
+.tab {
+    padding: var(--spacing-sm) var(--spacing-lg);
+    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.tab:hover {
+    color: var(--color-text-primary);
+    background: var(--color-surface-hover);
+}
+
+.tab.active {
+    color: var(--color-accent);
+    background: var(--color-surface-active);
+    border-color: var(--color-accent);
+}
+
+/* Content */
+.content {
+    flex: 1;
+    overflow: hidden;
+    padding: var(--spacing-lg);
+}
+
+/* Frames Tab */
+.framesTab {
+    display: grid;
+    grid-template-columns: 280px 1fr 300px;
+    gap: var(--spacing-lg);
+    height: 100%;
+}
+
+.frameList {
+    display: flex;
+    flex-direction: column;
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+}
+
+.listHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--spacing-md);
+    border-bottom: 1px solid var(--color-border);
+}
+
+.listHeader h3 {
+    font-size: var(--font-size-base);
+    font-weight: 600;
+}
+
+.addButton {
+    padding: var(--spacing-xs) var(--spacing-md);
+    font-size: var(--font-size-sm);
+    color: var(--color-accent);
+    background: transparent;
+    border: 1px solid var(--color-accent);
+    border-radius: var(--radius-sm);
+    transition: all var(--transition-fast);
+}
+
+.addButton:hover {
+    color: white;
+    background: var(--color-accent);
+}
+
+.frameItems {
+    flex: 1;
+    overflow-y: auto;
+    padding: var(--spacing-sm);
+}
+
+.frameItem {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-sm);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: background var(--transition-fast);
+    position: relative;
+}
+
+.frameItem:hover {
+    background: var(--color-surface-hover);
+}
+
+.frameItem.selected {
+    background: var(--color-surface-active);
+    border: 1px solid var(--color-accent);
+}
+
+.framePreview {
+    width: 50px;
+    height: 50px;
+    background: var(--color-bg-tertiary);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+}
+
+.framePreview img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.frameInfo {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.frameName {
+    font-size: var(--font-size-sm);
+    font-weight: 500;
+}
+
+.frameSlots {
+    font-size: var(--font-size-xs);
+    color: var(--color-text-tertiary);
+}
+
+.activeBadge {
+    font-size: var(--font-size-xs);
+    padding: 2px 6px;
+    background: var(--color-success);
+    color: white;
+    border-radius: var(--radius-sm);
+}
+
+.deleteButton {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 20px;
+    height: 20px;
+    font-size: 14px;
+    color: var(--color-text-tertiary);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity var(--transition-fast);
+}
+
+.frameItem:hover .deleteButton {
+    opacity: 1;
+}
+
+.deleteButton:hover {
+    color: var(--color-error);
+}
+
+/* Canvas Editor */
+.canvasEditor {
+    display: flex;
+    flex-direction: column;
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+}
+
+.editorHeader {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    padding: var(--spacing-md);
+    border-bottom: 1px solid var(--color-border);
+}
+
+.frameNameInput {
+    flex: 1;
+    padding: var(--spacing-sm);
+    font-size: var(--font-size-base);
+    font-weight: 500;
+    background: var(--color-bg-tertiary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    color: var(--color-text-primary);
+}
+
+.canvasSize {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
+}
+
+.canvasSize input {
+    width: 70px;
+    padding: var(--spacing-xs);
+    text-align: center;
+    font-size: var(--font-size-sm);
+    background: var(--color-bg-tertiary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    color: var(--color-text-primary);
+}
+
+.addSlotButton {
+    padding: var(--spacing-sm) var(--spacing-md);
+    font-size: var(--font-size-sm);
+    font-weight: 500;
+    color: white;
+    background: var(--color-accent);
+    border-radius: var(--radius-md);
+}
+
+.addSlotButton:hover {
+    background: var(--color-accent-hover);
+}
+
+.clearSlotsButton {
+    padding: var(--spacing-sm) var(--spacing-md);
+    font-size: var(--font-size-sm);
+    font-weight: 500;
+    color: var(--color-error);
+    background: transparent;
+    border: 1px solid var(--color-error);
+    border-radius: var(--radius-md);
+    transition: all var(--transition-fast);
+}
+
+.clearSlotsButton:hover {
+    color: white;
+    background: var(--color-error);
+}
+
+.canvas {
+    position: relative;
+    width: 100%;
+    max-width: 600px;
+    margin: 0 auto;
+    background: var(--color-bg-tertiary);
+    border: 2px dashed var(--color-border);
+    border-radius: var(--radius-md);
+    overflow: visible;
+    user-select: none;
+}
+
+.frameOverlay {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: fill;
+    /* Fill entire canvas to match slot coordinates exactly */
+    pointer-events: none;
+    z-index: 10;
+}
+
+.slot {
+    position: absolute;
+    background: rgba(99, 102, 241, 0.2);
+    border: 2px solid var(--color-accent);
+    border-radius: var(--radius-sm);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast), z-index 0s;
+    user-select: none;
+    z-index: 5;
+    /* Below overlay (z-index 10) by default */
+}
+
+.slot:hover {
+    border-color: var(--color-accent-hover);
+    box-shadow: 0 0 15px var(--color-accent-glow);
+    z-index: 15;
+    /* Above overlay on hover for easy interaction */
+}
+
+.slot.selected {
+    border-color: var(--color-success);
+    z-index: 20;
+    /* Well above overlay when selected */
+    box-shadow: 0 0 20px rgba(34, 197, 94, 0.4);
+}
+
+.slot.dragging {
+    border-style: dashed;
+    opacity: 0.8;
+}
+
+.slotNumber {
+    font-size: var(--font-size-xl);
+    font-weight: 700;
+    color: var(--color-accent);
+}
+
+.deleteSlotButton {
+    position: absolute;
+    top: -10px;
+    right: -10px;
+    width: 24px;
+    height: 24px;
+    font-size: 16px;
+    color: white;
+    background: var(--color-error);
+    border-radius: 50%;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity var(--transition-fast);
+}
+
+.slot:hover .deleteSlotButton {
+    opacity: 1;
+}
+
+.slotProperties {
+    padding: var(--spacing-md);
+    border-top: 1px solid var(--color-border);
+}
+
+.slotProperties h4 {
+    font-size: var(--font-size-sm);
+    margin-bottom: var(--spacing-sm);
+}
+
+.slotList {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+}
+
+.slotItem {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    padding: var(--spacing-sm);
+    background: var(--color-bg-tertiary);
+    border-radius: var(--radius-sm);
+}
+
+.slotInputs {
+    display: flex;
+    gap: var(--spacing-sm);
+    flex-wrap: wrap;
+}
+
+.slotInputs label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: var(--font-size-xs);
+    color: var(--color-text-tertiary);
+}
+
+.slotInputs input {
+    width: 60px;
+    padding: 4px;
+    font-size: var(--font-size-xs);
+    text-align: center;
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    color: var(--color-text-primary);
+}
+
+/* Slot Size Indicator */
+.slotSize {
+    position: absolute;
+    bottom: 4px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 10px;
+    color: var(--color-text-tertiary);
+    background: rgba(0, 0, 0, 0.7);
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+    white-space: nowrap;
+}
+
+/* Resize Handles */
+.resizeHandle {
+    position: absolute;
+    width: 12px;
+    height: 12px;
+    background: var(--color-accent);
+    border: 2px solid white;
+    border-radius: 50%;
+    z-index: 15;
+    opacity: 0;
+    transition: opacity var(--transition-fast), transform var(--transition-fast);
+}
+
+.slot:hover .resizeHandle,
+.slot.selected .resizeHandle {
+    opacity: 1;
+}
+
+.resizeHandle:hover {
+    transform: scale(1.3);
+}
+
+.handleNW {
+    top: -6px;
+    left: -6px;
+    cursor: nw-resize;
+}
+
+.handleNE {
+    top: -6px;
+    right: -6px;
+    cursor: ne-resize;
+}
+
+.handleSW {
+    bottom: -6px;
+    left: -6px;
+    cursor: sw-resize;
+}
+
+.handleSE {
+    bottom: -6px;
+    right: -6px;
+    cursor: se-resize;
+}
+
+.noFrameSelected {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--color-text-tertiary);
+}
+
+.emptyState {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: var(--spacing-xl);
+    text-align: center;
+    color: var(--color-text-tertiary);
+}
+
+.emptyState p:first-child {
+    font-size: var(--font-size-base);
+    margin-bottom: var(--spacing-xs);
+}
+
+.emptyState p:last-child {
+    font-size: var(--font-size-sm);
+}
+
+/* Timers Tab */
+.timersTab {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: var(--spacing-lg);
+    max-width: 1000px;
+    margin: 0 auto;
+    max-height: calc(100vh - 200px);
+    overflow-y: auto;
+    padding: var(--spacing-sm);
+}
+
+.timerCard {
+    padding: var(--spacing-xl);
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+}
+
+.timerCard h3 {
+    font-size: var(--font-size-lg);
+    margin-bottom: var(--spacing-xs);
+}
+
+.timerCard p {
+    font-size: var(--font-size-sm);
+    color: var(--color-text-tertiary);
+    margin-bottom: var(--spacing-lg);
+}
+
+.timerInput {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+}
+
+.timerInput input[type="range"] {
+    flex: 1;
+    height: 8px;
+    background: var(--color-bg-tertiary);
+    border-radius: var(--radius-full);
+    appearance: none;
+}
+
+.timerInput input[type="range"]::-webkit-slider-thumb {
+    appearance: none;
+    width: 20px;
+    height: 20px;
+    background: var(--color-accent);
+    border-radius: 50%;
+    cursor: pointer;
+}
+
+.timerValue {
+    min-width: 50px;
+    font-size: var(--font-size-xl);
+    font-weight: 700;
+    color: var(--color-accent);
+    text-align: right;
+}
+
+/* Timer Toggle Switch */
+.timerToggle {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+}
+
+.toggleSwitch {
+    position: relative;
+    display: inline-block;
+    width: 56px;
+    height: 28px;
+}
+
+.toggleSwitch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.toggleSlider {
+    position: absolute;
+    cursor: pointer;
+    inset: 0;
+    background-color: var(--color-bg-tertiary);
+    border: 2px solid var(--color-border);
+    border-radius: var(--radius-full);
+    transition: all var(--transition-normal);
+}
+
+.toggleSlider::before {
+    position: absolute;
+    content: "";
+    height: 20px;
+    width: 20px;
+    left: 2px;
+    bottom: 2px;
+    background-color: var(--color-text-tertiary);
+    border-radius: 50%;
+    transition: all var(--transition-normal);
+}
+
+.toggleSwitch input:checked+.toggleSlider {
+    background-color: var(--color-accent);
+    border-color: var(--color-accent);
+}
+
+.toggleSwitch input:checked+.toggleSlider::before {
+    transform: translateX(28px);
+    background-color: white;
+}
+
+.toggleSwitch input:focus+.toggleSlider {
+    box-shadow: 0 0 0 3px var(--color-accent-glow);
+}
+
+.toggleLabel {
+    font-size: var(--font-size-sm);
+    font-weight: 500;
+    color: var(--color-text-secondary);
+}
+
+/* Disabled state for timer controls */
+.timerInput input[type="range"]:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.timerInput input[type="range"]:disabled::-webkit-slider-thumb {
+    cursor: not-allowed;
+}
+
+/* Filters Tab */
+.filtersTab {
+    max-width: 1000px;
+    margin: 0 auto;
+}
+
+.filterHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: var(--spacing-lg);
+}
+
+.filterHeader h3 {
+    font-size: var(--font-size-xl);
+}
+
+.filterGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: var(--spacing-md);
+}
+
+.filterCard {
+    position: relative;
+    padding: var(--spacing-md);
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    text-align: center;
+}
+
+.filterPreview {
+    width: 100%;
+    aspect-ratio: 1;
+    background: var(--color-bg-tertiary);
+    border-radius: var(--radius-md);
+    margin-bottom: var(--spacing-sm);
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.filterPreview img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.filterPlaceholder {
+    font-size: var(--font-size-3xl);
+}
+
+.filterName {
+    font-size: var(--font-size-sm);
+}
+
+.filterCard .deleteButton {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    opacity: 0;
+}
+
+.filterCard:hover .deleteButton {
+    opacity: 1;
+}
+
+/* ===================== */
+/* NEW STYLES FOR ADMIN UI IMPROVEMENTS */
+/* ===================== */
+
+/* Zoom Controls */
+.zoomControls {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-sm);
+    background: var(--color-bg-tertiary);
+    border-radius: var(--radius-md);
+    margin: 0 var(--spacing-lg);
+}
+
+.zoomControls button {
+    width: 32px;
+    height: 32px;
+    font-size: var(--font-size-lg);
+    font-weight: 600;
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    color: var(--color-text-primary);
+}
+
+.zoomControls button:hover {
+    background: var(--color-accent);
+    color: white;
+    border-color: var(--color-accent);
+}
+
+.zoomLevel {
+    min-width: 50px;
+    text-align: center;
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    color: var(--color-text-secondary);
+}
+
+/* Canvas Wrapper */
+.canvasWrapper {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: auto;
+    padding: var(--spacing-lg);
+}
+
+/* Rotation Handle */
+.rotateHandle {
+    position: absolute;
+    top: -25px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 16px;
+    height: 16px;
+    background: var(--color-accent);
+    border: 2px solid white;
+    border-radius: 50%;
+    cursor: grab;
+    z-index: 20;
+    opacity: 0;
+    transition: opacity var(--transition-fast), transform var(--transition-fast);
+}
+
+.rotateHandle::before {
+    content: '';
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 2px;
+    height: 10px;
+    background: var(--color-accent);
+}
+
+.slot:hover .rotateHandle,
+.slot.selected .rotateHandle {
+    opacity: 1;
+}
+
+.rotateHandle:hover {
+    transform: translateX(-50%) scale(1.3);
+    cursor: grabbing;
+}
+
+/* Slot Sidebar (Right Column) */
+.slotSidebar {
+    display: flex;
+    flex-direction: column;
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+}
+
+.sidebarHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--spacing-md);
+    border-bottom: 1px solid var(--color-border);
+}
+
+.sidebarHeader h3 {
+    font-size: var(--font-size-base);
+    font-weight: 600;
+    margin: 0;
+}
+
+.slotCount {
+    font-size: var(--font-size-xs);
+    color: var(--color-text-tertiary);
+    background: var(--color-bg-tertiary);
+    padding: 2px 8px;
+    border-radius: var(--radius-full);
+}
+
+.slotListSidebar {
+    flex: 1;
+    overflow-y: auto;
+    padding: var(--spacing-sm);
+}
+
+.slotItemSidebar {
+    background: var(--color-bg-tertiary);
+    border-radius: var(--radius-md);
+    margin-bottom: var(--spacing-xs);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    border: 1px solid transparent;
+}
+
+.slotItemSidebar:hover {
+    border-color: var(--color-border-hover);
+}
+
+.slotItemSidebar.expanded {
+    border-color: var(--color-accent);
+    background: var(--color-surface-active);
+}
+
+.slotItemHeader {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-sm) var(--spacing-md);
+}
+
+.slotIcon {
+    font-size: var(--font-size-base);
+}
+
+.slotLabel {
+    flex: 1;
+    font-size: var(--font-size-sm);
+    font-weight: 500;
+}
+
+.slotDimensions {
+    font-size: var(--font-size-xs);
+    color: var(--color-text-tertiary);
+}
+
+.slotDetails {
+    padding: var(--spacing-sm) var(--spacing-md) var(--spacing-md);
+    border-top: 1px solid var(--color-border);
+}
+
+.slotPropsGrid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-sm);
+}
+
+.slotPropsGrid label {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-size: var(--font-size-xs);
+    color: var(--color-text-tertiary);
+}
+
+.slotPropsGrid input {
+    width: 100%;
+    padding: var(--spacing-xs);
+    font-size: var(--font-size-sm);
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    color: var(--color-text-primary);
+}
+
+.rotationLabel {
+    grid-column: span 2;
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center;
+    gap: var(--spacing-xs);
+}
+
+.rotationLabel input {
+    flex: 1;
+}
+
+.rotationLabel span {
+    color: var(--color-text-tertiary);
+}
+
+.deleteSlotBtn {
+    width: 100%;
+    padding: var(--spacing-sm);
+    font-size: var(--font-size-xs);
+    font-weight: 500;
+    color: var(--color-error);
+    background: transparent;
+    border: 1px solid var(--color-error);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.deleteSlotBtn:hover {
+    color: white;
+    background: var(--color-error);
+}
+
+.emptySlots {
+    text-align: center;
+    padding: var(--spacing-xl);
+    color: var(--color-text-tertiary);
+}
+
+.emptySlots p:first-child {
+    font-size: var(--font-size-base);
+    margin-bottom: var(--spacing-xs);
+}
+
+.emptySlots p:last-child {
+    font-size: var(--font-size-sm);
+}
+
+.duplicateLabel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-xs);
+    font-size: var(--font-size-xs);
+    color: var(--color-text-secondary);
+    grid-column: 1 / -1;
+    margin-top: var(--spacing-sm);
+}
+
+.duplicateLabel select {
+    padding: var(--spacing-sm);
+    font-size: var(--font-size-sm);
+    background: var(--color-bg-tertiary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    color: var(--color-text-primary);
+    cursor: pointer;
+}
+
+.duplicateLabel select:focus {
+    outline: none;
+    border-color: var(--color-accent);
+}
+
+/* ===================== */
+/* HISTORY TAB STYLES */
+/* ===================== */
+
+.historyTab {
+    max-width: 1200px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.historyHeader {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-lg);
+    margin-bottom: var(--spacing-lg);
+}
+
+.historyHeader h3 {
+    font-size: var(--font-size-xl);
+    margin: 0;
+}
+
+.historyCount {
+    font-size: var(--font-size-sm);
+    color: var(--color-text-tertiary);
+    padding: var(--spacing-xs) var(--spacing-md);
+    background: var(--color-bg-tertiary);
+    border-radius: var(--radius-full);
+}
+
+.historyTable {
+    flex: 1;
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    overflow: auto;
+}
+
+.tableHeader {
+    display: grid;
+    grid-template-columns: 2fr 0.5fr 0.75fr 1.25fr;
+    gap: var(--spacing-md);
+    padding: var(--spacing-md) var(--spacing-lg);
+    background: var(--color-bg-tertiary);
+    border-bottom: 1px solid var(--color-border);
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    position: sticky;
+    top: 0;
+}
+
+.tableRow {
+    display: grid;
+    grid-template-columns: 2fr 0.5fr 0.75fr 1.25fr;
+    gap: var(--spacing-md);
+    padding: var(--spacing-md) var(--spacing-lg);
+    border-bottom: 1px solid var(--color-border);
+    font-size: var(--font-size-sm);
+    transition: background var(--transition-fast);
+}
+
+.tableRow:hover {
+    background: var(--color-surface-hover);
+}
+
+.tableRow:last-child {
+    border-bottom: none;
+}
+
+.emailCell {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.printCell {
+    text-align: center;
+}
+
+.galleryLink {
+    color: var(--color-accent);
+    text-decoration: none;
+    font-weight: 500;
+    transition: color var(--transition-fast);
+}
+
+.galleryLink:hover {
+    color: var(--color-accent-hover);
+    text-decoration: underline;
+}
+
+.dateCell {
+    color: var(--color-text-secondary);
+    font-size: var(--font-size-xs);
+}
+
+.pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--spacing-lg);
+    padding: var(--spacing-lg);
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-top: none;
+    border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+
+.pagination button {
+    padding: var(--spacing-sm) var(--spacing-md);
+    font-size: var(--font-size-sm);
+    color: var(--color-accent);
+    background: transparent;
+    border: 1px solid var(--color-accent);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.pagination button:hover:not(:disabled) {
+    color: white;
+    background: var(--color-accent);
+}
+
+.pagination button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.pagination span {
+    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
+}
+
+.loadingState {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: var(--spacing-3xl);
+    gap: var(--spacing-lg);
+    color: var(--color-text-tertiary);
+}
+
+.spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid var(--color-border);
+    border-top-color: var(--color-accent);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}

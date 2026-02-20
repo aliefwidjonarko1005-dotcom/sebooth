@@ -1,0 +1,525 @@
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { motion, AnimatePresence } from 'framer-motion'
+import { useFrameStore, useSessionStore, useAppConfig, useCameraStore } from '../stores'
+import { SessionTimer } from '../components/SessionTimer'
+import styles from './CaptureSession.module.css'
+
+type CaptureState = 'idle' | 'countdown' | 'capturing' | 'preview'
+
+function CaptureSession(): JSX.Element {
+    const navigate = useNavigate()
+    const { frames, activeFrame } = useFrameStore()
+    const { config } = useAppConfig()
+    const { photos, addPhoto, startSession, currentSession } = useSessionStore()
+    const { isConnected } = useCameraStore()
+
+    const [captureState, setCaptureState] = useState<CaptureState>('idle')
+    const [countdown, setCountdown] = useState(config.countdownDuration)
+    const [currentSlotIndex, setCurrentSlotIndex] = useState(0)
+    const [lastCapturedImage, setLastCapturedImage] = useState<string | null>(null)
+    const [isLoadingCamera, setIsLoadingCamera] = useState(true)
+    const [cameraError, setCameraError] = useState<string | null>(null)
+
+    const videoRef = useRef<HTMLVideoElement>(null)
+    const canvasRef = useRef<HTMLCanvasElement>(null)
+    const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null)
+    const streamRef = useRef<MediaStream | null>(null)
+
+    // Live Photo video recording refs
+    const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+    const videoChunksRef = useRef<Blob[]>([])
+    const recordingStartTimeRef = useRef<number>(0)
+
+    // Get active frame from store or first available
+    const currentFrame = activeFrame || frames[0]
+
+    // Get only non-duplicate slots (these are the ones user needs to capture)
+    const captureSlots = currentFrame?.slots.filter(s => !s.duplicateOfSlotId) || []
+
+    // Derive aspect ratio from first capturable slot
+    const slotAspectRatio = captureSlots[0]
+        ? `${captureSlots[0].width} / ${captureSlots[0].height}`
+        : '4 / 3'
+
+    // Start session on mount
+    useEffect(() => {
+        if (!currentSession && currentFrame) {
+            startSession(currentFrame.id)
+        }
+    }, [currentSession, currentFrame, startSession])
+
+    // Initialize webcam
+    useEffect(() => {
+        const initWebcam = async (): Promise<void> => {
+            setIsLoadingCamera(true)
+            setCameraError(null)
+
+            try {
+                // Check if mediaDevices is available
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                    throw new Error('Camera API not supported in this browser')
+                }
+
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        width: { ideal: 1920, min: 640 },
+                        height: { ideal: 1080, min: 480 },
+                        facingMode: 'user'
+                    }
+                })
+                streamRef.current = stream
+                if (videoRef.current) {
+                    videoRef.current.srcObject = stream
+                }
+                setIsLoadingCamera(false)
+            } catch (error) {
+                console.error('Failed to access webcam:', error)
+                const err = error as Error
+                let message = 'Failed to access camera'
+
+                if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+                    message = 'Camera permission denied. Please allow camera access.'
+                } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+                    message = 'No camera found on this device.'
+                } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+                    message = 'Camera is being used by another application.'
+                } else if (err.message) {
+                    message = err.message
+                }
+
+                setCameraError(message)
+                setIsLoadingCamera(false)
+            }
+        }
+
+        initWebcam()
+
+        return () => {
+            if (streamRef.current) {
+                streamRef.current.getTracks().forEach(track => track.stop())
+            }
+            if (countdownRef.current) {
+                clearInterval(countdownRef.current)
+            }
+        }
+    }, [])
+
+    // Find next empty slot (skips duplicate slots)
+    const getNextEmptySlot = useCallback(() => {
+        if (!currentFrame) return null
+        for (let i = 0; i < currentFrame.slots.length; i++) {
+            const slot = currentFrame.slots[i]
+            // Skip slots that are duplicates (they use another slot's photo)
+            if (slot.duplicateOfSlotId) continue
+            if (!photos.some(p => p.slotId === slot.id)) {
+                return { slot, index: i }
+            }
+        }
+        return null
+    }, [currentFrame, photos])
+
+    // Capture photo from video element - returns data URL
+    const captureFromWebcam = useCallback((): string | null => {
+        if (!videoRef.current || !canvasRef.current) return null
+
+        const video = videoRef.current
+        const canvas = canvasRef.current
+
+        // Set canvas size to match video
+        canvas.width = video.videoWidth || 1280
+        canvas.height = video.videoHeight || 720
+
+        const ctx = canvas.getContext('2d')
+        if (!ctx) return null
+
+        // Mirror the image (flip horizontally) for selfie mode
+        ctx.translate(canvas.width, 0)
+        ctx.scale(-1, 1)
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+
+        // Return as data URL
+        return canvas.toDataURL('image/jpeg', 0.92)
+    }, [])
+
+    // Handle countdown or immediate capture
+    const startCountdown = useCallback((slotIndex: number) => {
+        setCurrentSlotIndex(slotIndex)
+
+        // If timer is disabled, capture immediately
+        if (!config.timerEnabled) {
+            triggerCapture(slotIndex)
+            return
+        }
+
+        setCaptureState('countdown')
+        setCountdown(config.countdownDuration)
+
+        // Start video recording for Live Photo
+        if (streamRef.current && !mediaRecorderRef.current) {
+            try {
+                // Find supported mimeType for this browser
+                const mimeTypes = [
+                    'video/webm;codecs=vp9',
+                    'video/webm;codecs=vp8',
+                    'video/webm',
+                    'video/mp4'
+                ]
+                let selectedMimeType = ''
+                for (const type of mimeTypes) {
+                    if (MediaRecorder.isTypeSupported(type)) {
+                        selectedMimeType = type
+                        break
+                    }
+                }
+
+                const options: MediaRecorderOptions = {}
+                if (selectedMimeType) {
+                    options.mimeType = selectedMimeType
+                }
+
+                const mediaRecorder = new MediaRecorder(streamRef.current, options)
+                videoChunksRef.current = []
+                recordingStartTimeRef.current = Date.now()
+
+                mediaRecorder.ondataavailable = (event) => {
+                    if (event.data.size > 0) {
+                        videoChunksRef.current.push(event.data)
+                        // Keep only last 6 seconds of chunks (5s + buffer)
+                        const maxChunks = 12 // 500ms intervals * 12 = 6 seconds
+                        if (videoChunksRef.current.length > maxChunks) {
+                            videoChunksRef.current = videoChunksRef.current.slice(-maxChunks)
+                        }
+                    }
+                }
+
+                mediaRecorder.start(500) // Collect data every 500ms
+                mediaRecorderRef.current = mediaRecorder
+            } catch (err) {
+                console.error('Failed to start MediaRecorder:', err)
+            }
+        }
+
+        countdownRef.current = setInterval(() => {
+            setCountdown(prev => {
+                if (prev <= 1) {
+                    if (countdownRef.current) {
+                        clearInterval(countdownRef.current)
+                    }
+                    triggerCapture(slotIndex)
+                    return 0
+                }
+                return prev - 1
+            })
+        }, 1000)
+    }, [config.countdownDuration, config.timerEnabled])
+
+    // Trigger capture - uses webcam directly
+    const triggerCapture = (slotIndex: number): void => {
+        if (!currentFrame) return
+
+        setCaptureState('capturing')
+        const slot = currentFrame.slots[slotIndex]
+
+        // Helper to complete capture after optional video save
+        const completeCapture = (videoUrl?: string) => {
+            // Small delay for flash effect
+            setTimeout(() => {
+                // Capture from webcam
+                const dataUrl = captureFromWebcam()
+
+                if (dataUrl) {
+                    setLastCapturedImage(dataUrl)
+
+                    // Save photo to session store with video for Live Photo
+                    if (slot) {
+                        addPhoto(slot.id, dataUrl, videoUrl)
+                    }
+
+                    // Show preview
+                    setCaptureState('preview')
+
+                    setTimeout(() => {
+                        setCaptureState('idle')
+
+                        // Auto-advance to next slot
+                        const next = getNextEmptySlot()
+                        if (next) {
+                            setCurrentSlotIndex(next.index)
+                        }
+                    }, config.previewDuration * 1000)
+                } else {
+                    console.error('Failed to capture from webcam')
+                    setCaptureState('idle')
+                }
+            }, 100)
+        }
+
+        // Stop video recording and get video data URL
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+            const recorder = mediaRecorderRef.current
+
+            // Set up onstop to create blob after all data is collected
+            recorder.onstop = () => {
+                if (videoChunksRef.current.length > 0) {
+                    const videoBlob = new Blob(videoChunksRef.current, { type: 'video/webm' })
+                    const videoDataUrl = URL.createObjectURL(videoBlob)
+                    completeCapture(videoDataUrl)
+                } else {
+                    completeCapture()
+                }
+                videoChunksRef.current = []
+            }
+
+            recorder.stop()
+            mediaRecorderRef.current = null
+        } else {
+            completeCapture()
+        }
+    }
+    // Handle ready button
+    const handleReady = (): void => {
+        const next = getNextEmptySlot()
+        if (next) {
+            startCountdown(next.index)
+        } else if (currentFrame && currentFrame.slots.length > 0) {
+            // Retake first slot if all filled
+            startCountdown(0)
+        }
+    }
+
+    // Handle slot click
+    const handleSlotClick = (slotIndex: number): void => {
+        if (captureState === 'idle') {
+            startCountdown(slotIndex)
+        }
+    }
+
+    // Check if all non-duplicate slots are filled
+    const allSlotsFilled = captureSlots.every(slot =>
+        photos.some(p => p.slotId === slot.id)
+    )
+
+    // Navigate to processing
+    const handleDone = (): void => {
+        navigate('/processing')
+    }
+
+    if (!currentFrame) {
+        return (
+            <div className={styles.container}>
+                <div className={styles.noFrame}>
+                    <h2>No Frame Selected</h2>
+                    <p>Please select a frame first.</p>
+                    <button onClick={() => navigate('/frames')}>Select Frame</button>
+                </div>
+            </div>
+        )
+    }
+
+    return (
+        <motion.div
+            className={styles.container}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+        >
+            {/* Hidden canvas for webcam capture */}
+            <canvas ref={canvasRef} style={{ display: 'none' }} />
+
+            {/* Session Timer Overlay */}
+            <SessionTimer
+                duration={config.captureTimeout}
+                onTimeout={() => navigate('/processing')}
+                enabled={config.sessionTimerEnabled}
+                label="Capture Session"
+            />
+
+            {/* Main Capture Area */}
+            <div className={styles.captureArea}>
+                {/* Controls Bar - No back button to prevent timer circumvention */}
+                <div className={styles.controlsBar}>
+                    <h2 className={styles.frameName}>{currentFrame.name}</h2>
+                    <div className={styles.controlsRight}>
+                        <span className={styles.photoCount}>
+                            {photos.length < captureSlots.length
+                                ? `Photo ${photos.length + 1} of ${captureSlots.length}`
+                                : `${photos.length} of ${captureSlots.length} ✓`}
+                        </span>
+                    </div>
+                </div>
+
+                {/* Live Viewfinder */}
+                <div
+                    className={styles.viewfinder}
+                    style={{ aspectRatio: slotAspectRatio }}
+                >
+                    {/* Camera Feed */}
+                    <video
+                        ref={videoRef}
+                        autoPlay
+                        playsInline
+                        muted
+                        className={styles.video}
+                    />
+
+                    {/* Loading Overlay */}
+                    {isLoadingCamera && (
+                        <div className={styles.loadingOverlay}>
+                            <div className={styles.spinner}></div>
+                            <p>Initializing camera...</p>
+                        </div>
+                    )}
+
+                    {/* Camera Error Overlay */}
+                    {cameraError && (
+                        <div className={styles.errorOverlay}>
+                            <span className={styles.errorIcon}>📷</span>
+                            <h3>Camera Error</h3>
+                            <p>{cameraError}</p>
+                            <button
+                                onClick={() => window.location.reload()}
+                                className={styles.retryButton}
+                            >
+                                🔄 Retry
+                            </button>
+                        </div>
+                    )}
+
+                    {/* Countdown Overlay */}
+                    <AnimatePresence>
+                        {captureState === 'countdown' && (
+                            <motion.div
+                                className={styles.countdownOverlay}
+                                initial={{ opacity: 0 }}
+                                animate={{ opacity: 1 }}
+                                exit={{ opacity: 0 }}
+                            >
+                                <motion.span
+                                    key={countdown}
+                                    className={styles.countdownNumber}
+                                    initial={{ scale: 0.5, opacity: 0 }}
+                                    animate={{ scale: 1, opacity: 1 }}
+                                    exit={{ scale: 1.5, opacity: 0 }}
+                                    transition={{ duration: 0.3 }}
+                                >
+                                    {countdown}
+                                </motion.span>
+                                <span className={styles.slotIndicator}>
+                                    Photo {captureSlots.findIndex(s => s.id === currentFrame.slots[currentSlotIndex]?.id) + 1} of {captureSlots.length}
+                                </span>
+                            </motion.div>
+                        )}
+                    </AnimatePresence>
+
+                    {/* Capturing Flash */}
+                    <AnimatePresence>
+                        {captureState === 'capturing' && (
+                            <motion.div
+                                className={styles.flashOverlay}
+                                initial={{ opacity: 0 }}
+                                animate={{ opacity: 1 }}
+                                exit={{ opacity: 0 }}
+                                transition={{ duration: 0.1 }}
+                            />
+                        )}
+                    </AnimatePresence>
+
+                    {/* Preview */}
+                    <AnimatePresence>
+                        {captureState === 'preview' && lastCapturedImage && (
+                            <motion.div
+                                className={styles.previewOverlay}
+                                initial={{ opacity: 0, scale: 0.9 }}
+                                animate={{ opacity: 1, scale: 1 }}
+                                exit={{ opacity: 0 }}
+                            >
+                                <img
+                                    src={lastCapturedImage}
+                                    alt="Captured"
+                                    className={styles.previewImage}
+                                />
+                                <div className={styles.previewBadge}>
+                                    <span className={styles.checkmark}>✓</span>
+                                    Photo {captureSlots.findIndex(s => s.id === currentFrame.slots[currentSlotIndex]?.id) + 1} saved!
+                                </div>
+                            </motion.div>
+                        )}
+                    </AnimatePresence>
+                </div>
+
+                {/* Ready Button */}
+                {captureState === 'idle' && (
+                    <motion.button
+                        className={styles.readyButton}
+                        onClick={handleReady}
+                        whileHover={{ scale: 1.05 }}
+                        whileTap={{ scale: 0.95 }}
+                    >
+                        📸 {allSlotsFilled ? 'Retake Photo' : 'Take Photo'}
+                    </motion.button>
+                )}
+            </div>
+
+            {/* Sidebar with Photo Slots - Only show non-duplicate slots */}
+            <aside className={styles.sidebar}>
+                <div className={styles.sidebarHeader}>
+                    <h3>Your Photos</h3>
+                    <span className={styles.photoProgress}>{photos.length}/{captureSlots.length}</span>
+                </div>
+
+                <div className={styles.slotGridWrapper}>
+                    <div className={styles.slotGrid}>
+                        {captureSlots.map((slot, sequentialIndex) => {
+                            const photo = photos.find(p => p.slotId === slot.id)
+                            // Find original index in currentFrame.slots for click handler
+                            const originalIndex = currentFrame.slots.findIndex(s => s.id === slot.id)
+                            const isCurrentSlot = currentSlotIndex === originalIndex && captureState !== 'idle'
+
+                            return (
+                                <motion.div
+                                    key={slot.id}
+                                    className={`${styles.slotThumbnail} ${photo ? styles.filled : ''} ${isCurrentSlot ? styles.active : ''}`}
+                                    onClick={() => handleSlotClick(originalIndex)}
+                                    whileHover={{ scale: 1.02 }}
+                                    whileTap={{ scale: 0.98 }}
+                                >
+                                    {photo ? (
+                                        <img
+                                            src={photo.imagePath}
+                                            alt={`Photo ${sequentialIndex + 1}`}
+                                        />
+                                    ) : (
+                                        <span className={styles.slotNumber}>{sequentialIndex + 1}</span>
+                                    )}
+                                    {photo && <span className={styles.retakeHint}>Tap to retake</span>}
+                                </motion.div>
+                            )
+                        })}
+                    </div>
+                </div>
+
+
+
+                {/* Done Button */}
+                <motion.button
+                    className={`${styles.doneButton} ${allSlotsFilled ? styles.ready : ''}`}
+                    onClick={handleDone}
+                    disabled={photos.length === 0}
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                >
+                    {allSlotsFilled ? '✨ Continue to Edit' : `${photos.length}/${captureSlots.length} Photos`}
+                </motion.button>
+
+                {/* Connection Status */}
+                <div className={styles.connectionStatus}>
+                    <span className={`${styles.statusDot} ${isConnected ? styles.connected : ''}`} />
+                    {isConnected ? 'Camera Connected' : 'Using Webcam'}
+                </div>
+            </aside>
+        </motion.div>
+    )
+}
+
+export default CaptureSession
