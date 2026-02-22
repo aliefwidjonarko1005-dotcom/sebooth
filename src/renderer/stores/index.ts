@@ -38,7 +38,8 @@ const defaultConfig: AppConfig = {
     midtransClientKey: '',
     midtransServerKey: '',
     paymentInstructions: 'Scan QR code dengan aplikasi e-wallet atau mobile banking Anda. Pembayaran akan terkonfirmasi otomatis.',
-    paymentTimeout: 300 // 5 minutes
+    paymentTimeout: 300, // 5 minutes
+    sharingMode: 'cloud' // Can be 'cloud' or 'local'
 }
 
 export const useAppConfig = create<AppConfigState>()(

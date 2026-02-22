@@ -65,6 +65,9 @@ const api = {
         getTempPath: (): Promise<APIResponse<string>> =>
             ipcRenderer.invoke('system:get-temp-path'),
 
+        getLocalIp: (): Promise<APIResponse<string | null>> =>
+            ipcRenderer.invoke('system:get-local-ip'),
+
         getUserDataPath: (): Promise<APIResponse<string>> =>
             ipcRenderer.invoke('system:get-user-data-path'),
 
@@ -80,8 +83,29 @@ const api = {
         fileExists: (filePath: string): Promise<APIResponse<boolean>> =>
             ipcRenderer.invoke('system:file-exists', filePath),
 
+        readFileAsBase64: (filePath: string): Promise<APIResponse<string>> =>
+            ipcRenderer.invoke('system:read-file-base64', filePath),
+
         saveDataUrl: (dataUrl: string, filename: string): Promise<APIResponse<string>> =>
-            ipcRenderer.invoke('system:save-data-url', dataUrl, filename)
+            ipcRenderer.invoke('system:save-data-url', dataUrl, filename),
+
+        saveSessionLocally: (params: {
+            sessionId: string
+            stripDataUrl?: string
+            gifDataUrl?: string
+            photos: { path: string; filename: string }[]
+            videos: { path: string; filename: string }[]
+            overlay?: { path: string; filename: string }
+            frameConfig?: {
+                width: number
+                height: number
+                slots: { width: number; height: number; x: number; y: number }[]
+            }
+        }): Promise<APIResponse<{ path: string; filename: string; mimeType: string }[]>> =>
+            ipcRenderer.invoke('system:save-session-locally', params),
+
+        generateHqGif: (framesBase64: string[], delayMs: number): Promise<APIResponse<string>> =>
+            ipcRenderer.invoke('system:generate-hq-gif', framesBase64, delayMs)
     },
 
     // Image APIs
@@ -147,6 +171,15 @@ const api = {
 
         isConfigured: (): Promise<boolean> =>
             ipcRenderer.invoke('email:is-configured')
+    },
+
+    // Drive APIs
+    drive: {
+        uploadSession: (params: {
+            sessionId: string
+            files: { path: string; filename: string; mimeType: string }[]
+        }): Promise<{ success: boolean; error?: string; folderUrl?: string; folderId?: string; files?: { filename: string; url: string; id: string }[] }> =>
+            ipcRenderer.invoke('drive:upload-session', params)
     },
 
     // Window APIs

@@ -35,12 +35,28 @@ interface SystemAPI {
         multiple?: boolean
     }) => Promise<APIResponse<string[]>>
     getTempPath: () => Promise<APIResponse<string>>
+    getLocalIp: () => Promise<APIResponse<string | null>>
     getUserDataPath: () => Promise<APIResponse<string>>
     copyFile: (source: string, destination: string) => Promise<APIResponse<string>>
     readJson: <T>(filePath: string) => Promise<APIResponse<T>>
     writeJson: (filePath: string, data: unknown) => Promise<APIResponse<void>>
     fileExists: (filePath: string) => Promise<APIResponse<boolean>>
+    readFileAsBase64: (filePath: string) => Promise<APIResponse<string>>
     saveDataUrl: (dataUrl: string, filename: string) => Promise<APIResponse<string>>
+    saveSessionLocally: (params: {
+        sessionId: string
+        stripDataUrl?: string
+        gifDataUrl?: string
+        photos: { path: string; filename: string }[]
+        videos: { path: string; filename: string }[]
+        overlay?: { path: string; filename: string }
+        frameConfig?: {
+            width: number
+            height: number
+            slots: { width: number; height: number; x: number; y: number; rotation: number }[]
+        }
+    }) => Promise<APIResponse<{ path: string; filename: string; mimeType: string }[]>>
+    generateHqGif: (framesBase64: string[], delayMs: number) => Promise<APIResponse<string>>
 }
 
 interface ImageAPI {
@@ -99,6 +115,19 @@ interface EmailAPI {
     isConfigured: () => Promise<boolean>
 }
 
+interface DriveAPI {
+    uploadSession: (params: {
+        sessionId: string
+        files: { path: string; filename: string; mimeType: string }[]
+    }) => Promise<{
+        success: boolean
+        error?: string
+        folderUrl?: string
+        folderId?: string
+        files?: { filename: string; url: string; id: string }[]
+    }>
+}
+
 interface API {
     camera: CameraAPI
     printer: PrinterAPI
@@ -106,6 +135,7 @@ interface API {
     image: ImageAPI
     window: WindowAPI
     email: EmailAPI
+    drive: DriveAPI
 }
 
 declare global {

@@ -14,7 +14,7 @@ function AdminDashboard(): JSX.Element {
     const { config, updateConfig } = useAppConfig()
     const { filters, addFilter, removeFilter } = useFilterStore()
 
-    const [activeTab, setActiveTab] = useState<'frames' | 'timers' | 'filters' | 'payment' | 'history'>('frames')
+    const [activeTab, setActiveTab] = useState<'frames' | 'timers' | 'filters' | 'payment' | 'history' | 'sharing'>('frames')
     const [selectedFrameId, setSelectedFrameId] = useState<string | null>(frames[0]?.id || null)
     const [draggedSlotId, setDraggedSlotId] = useState<string | null>(null)
     const [dragMode, setDragMode] = useState<DragMode>(null)
@@ -375,6 +375,12 @@ function AdminDashboard(): JSX.Element {
                     onClick={() => setActiveTab('history')}
                 >
                     📋 History
+                </button>
+                <button
+                    className={`${styles.tab} ${activeTab === 'sharing' ? styles.active : ''}`}
+                    onClick={() => setActiveTab('sharing')}
+                >
+                    📡 Sharing
                 </button>
             </nav>
 
@@ -1069,6 +1075,75 @@ function AdminDashboard(): JSX.Element {
                                 <p>Sessions will appear here after photos are taken</p>
                             </div>
                         )}
+                    </div>
+                )}
+
+                {/* Sharing Configuration Tab */}
+                {activeTab === 'sharing' && (
+                    <div className={styles.timersTab}>
+                        <div className={styles.timerCard}>
+                            <h3>📡 Event File Sharing Mode</h3>
+                            <p>Choose how guests will receive their digital copies</p>
+
+                            <div className={styles.timerInput} style={{ marginTop: '20px', display: 'flex', gap: '20px', flexDirection: 'column' }}>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '15px', cursor: 'pointer', padding: '15px', border: config.sharingMode === 'cloud' ? '2px solid #000' : '2px solid #e5e7eb', borderRadius: '12px' }}>
+                                    <input
+                                        type="radio"
+                                        name="sharingMode"
+                                        value="cloud"
+                                        checked={config.sharingMode === 'cloud' || !config.sharingMode}
+                                        onChange={() => updateConfig({ sharingMode: 'cloud' })}
+                                        style={{ width: '20px', height: '20px' }}
+                                    />
+                                    <div>
+                                        <div style={{ fontWeight: 'bold', fontSize: '16px' }}>☁️ Cloud Server (Supabase/Google Drive)</div>
+                                        <div style={{ fontSize: '13px', color: '#6b7280', marginTop: '4px' }}>Guests need internet access to download files. QR code points to an online web gallery.</div>
+                                    </div>
+                                </label>
+
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '15px', cursor: 'pointer', padding: '15px', border: config.sharingMode === 'local' ? '2px solid #000' : '2px solid #e5e7eb', borderRadius: '12px' }}>
+                                    <input
+                                        type="radio"
+                                        name="sharingMode"
+                                        value="local"
+                                        checked={config.sharingMode === 'local'}
+                                        onChange={() => updateConfig({ sharingMode: 'local' })}
+                                        style={{ width: '20px', height: '20px' }}
+                                    />
+                                    <div>
+                                        <div style={{ fontSize: '13px', color: '#6b7280', marginTop: '4px' }}>No internet required for guests. They connect to this laptop's Mobile Hotspot to download instantly.</div>
+                                    </div>
+                                </label>
+
+                                {config.sharingMode === 'local' && (
+                                    <div style={{ marginTop: '10px', padding: '20px', background: 'rgba(255,255,255,0.05)', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.1)' }}>
+                                        <h4 style={{ margin: '0 0 15px 0', color: 'white', fontSize: '16px' }}>Hotspot Configuration (For Auto-Connect)</h4>
+                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+                                            <div className={styles.formGroup}>
+                                                <label>Hotspot SSID (Network Name)</label>
+                                                <input
+                                                    type="text"
+                                                    value={config.wifiSsid || ''}
+                                                    onChange={e => updateConfig({ wifiSsid: e.target.value })}
+                                                    placeholder="e.g. Sebooth_WiFi"
+                                                    className={styles.input}
+                                                />
+                                            </div>
+                                            <div className={styles.formGroup}>
+                                                <label>Hotspot Password</label>
+                                                <input
+                                                    type="text"
+                                                    value={config.wifiPassword || ''}
+                                                    onChange={e => updateConfig({ wifiPassword: e.target.value })}
+                                                    placeholder="Required for auto-connect QR"
+                                                    className={styles.input}
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
                     </div>
                 )}
             </main >

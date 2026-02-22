@@ -2,7 +2,9 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useFrameStore, useSessionStore, useFilterStore, useAppConfig } from '../stores'
-import { uploadFile, logSession, saveGallery } from '../lib/supabase'
+import { uploadFile, saveGallery } from '../lib/supabase'
+// @ts-ignore
+import { GIFEncoder, quantize, applyPalette } from 'gifenc'
 import { sendPhotoEmail } from '../lib/email'
 import { EmailModal } from '../components/EmailModal'
 import { QRCodeModal } from '../components/QRCodeModal'
@@ -47,6 +49,7 @@ function PostProcessing(): JSX.Element {
     const [isSendingEmail, setIsSendingEmail] = useState(false)
     const [galleryUrl, setGalleryUrl] = useState<string | null>(null)
     const [photoStripUrl, setPhotoStripUrl] = useState<string | null>(null)
+    const [gifUrl, setGifUrl] = useState<string | null>(null)
     const [uploadedPhotoUrls, setUploadedPhotoUrls] = useState<string[]>([])
 
     // For GIF/Live preview
@@ -237,54 +240,9 @@ function PostProcessing(): JSX.Element {
         }
     }
 
-    // Handle email submit
-    const handleEmailSubmit = async (email: string): Promise<void> => {
-        if (!compositeDataUrl) return
-
-        setError(null)
-
-        try {
-            // Convert data URL to blob
-            const response = await fetch(compositeDataUrl)
-            const blob = await response.blob()
-            const fileName = `session_${currentSession?.id || Date.now()}_${Date.now()}.jpg`
-
-            // Upload to Supabase
-            const uploadResult = await uploadFile('exports', fileName, blob)
-
-            let photoUrl = compositeDataUrl
-            if (uploadResult && 'url' in uploadResult) {
-                photoUrl = uploadResult.url
-            }
-
-            // Log session
-            await logSession({
-                email,
-                photo_url: photoUrl,
-                metadata: {
-                    frameId: sessionFrame?.id,
-                    photoCount: photos.length,
-                    filter: selectedFilter
-                }
-            })
-
-            setEmail(email)
-            setLastEmail(email)
-            setShowSuccess(true)
-
-            // Auto-reset after 5 seconds
-            setTimeout(() => {
-                handleDone()
-            }, 5000)
-        } catch (err) {
-            console.error('Email submit error:', err)
-            throw new Error('Failed to send: ' + (err as Error).message)
-        }
-    }
-
-    // Handle QR code generation - upload all outputs and create gallery
+    // Handle QR code generation - save locally, upload to Google Drive, and fallback to Supabase if needed
     const handleGenerateQR = async (): Promise<void> => {
-        if (!compositeDataUrl || !currentSession) return
+        if (!compositeDataUrl || !currentSession || !window.api.drive || !window.api.system.saveSessionLocally) return
 
         setIsGeneratingQR(true)
         setQrPhotoUrl(null)
@@ -294,104 +252,276 @@ function PostProcessing(): JSX.Element {
             const sessionId = currentSession.id
             const timestamp = Date.now()
 
-            // Upload photo strip
-            let photoStripUrl: string | undefined
-            const stripBlob = await (await fetch(compositeDataUrl)).blob()
-            const stripResult = await uploadFile('exports', `strip_${sessionId}_${timestamp}.jpg`, stripBlob)
-            if (stripResult && 'url' in stripResult) {
-                photoStripUrl = stripResult.url
-            }
-
-            // Upload individual photos
-            const photoUrls: string[] = []
-            for (let i = 0; i < photos.length; i++) {
+            // 0. Generate GIF data URL
+            let gifDataUrl = ''
+            if (photos.length > 0) {
                 try {
-                    const photoBlob = await (await fetch(photos[i].imagePath)).blob()
-                    const photoResult = await uploadFile('exports', `photo_${sessionId}_${i}_${timestamp}.jpg`, photoBlob)
-                    if (photoResult && 'url' in photoResult) {
-                        photoUrls.push(photoResult.url)
-                    }
-                } catch (err) {
-                    console.error(`Failed to upload photo ${i}:`, err)
-                }
-            }
+                    const gifCanvas = document.createElement('canvas')
 
-            // First, upload unique videos (one per captured photo)
-            const uploadedVideoUrls: { [slotId: string]: string } = {}
-            for (const photo of photos) {
-                if (photo.videoPath) {
-                    try {
-                        const videoPath = photo.videoPath
-                        const fetchUrl = videoPath.startsWith('blob:') ? videoPath : `file://${videoPath}`
-                        const videoBlob = await (await fetch(fetchUrl)).blob()
-                        const videoResult = await uploadFile('exports', `video_${sessionId}_${photo.slotId}_${timestamp}.webm`, videoBlob)
-                        if (videoResult && 'url' in videoResult) {
-                            uploadedVideoUrls[photo.slotId] = videoResult.url
+                    // High-Quality GIF: Use the first photo's native dimensions or frame aspect ratio
+                    const firstSlot = sessionFrame?.slots?.[0]
+                    const slotAspect = firstSlot ? (firstSlot.width / firstSlot.height) : 1.5
+
+                    // Maximize resolution, typically photobooths run at 1080p width
+                    gifCanvas.width = 1080
+                    gifCanvas.height = Math.round(1080 / slotAspect)
+
+                    // Force high-quality interpolation
+                    const gctx = gifCanvas.getContext('2d', { willReadFrequently: true, alpha: false })
+                    if (gctx) {
+                        gctx.imageSmoothingEnabled = true
+                        gctx.imageSmoothingQuality = 'high'
+
+                        // Apply active filter
+                        const filterDef = FILTERS.find(f => f.id === selectedFilter)
+                        if (filterDef && filterDef.id !== 'none') {
+                            gctx.filter = filterDef.filterStr
+                        } else {
+                            gctx.filter = 'none'
                         }
-                    } catch (err) {
-                        console.error(`Failed to upload video for slot ${photo.slotId}:`, err)
-                    }
-                }
-            }
 
-            // Build videoUrls array matching ALL frame slots (including duplicates)
-            // For duplicate slots, use the video from source slot
-            const videoUrls: string[] = sessionFrame?.slots.map(slot => {
-                const sourceSlotId = slot.duplicateOfSlotId || slot.id
-                return uploadedVideoUrls[sourceSlotId] || ''
-            }) || []
+                        const framesBase64: string[] = []
 
-            // Upload frame overlay for Live Photo display
-            let frameOverlayUrl: string | undefined
-            let frameData: { canvasWidth: number; canvasHeight: number; overlayUrl: string; slots: { x: number; y: number; width: number; height: number; rotation: number }[] } | undefined
+                        for (const photo of photos) {
+                            const img = new Image()
+                            img.crossOrigin = 'anonymous'
+                            img.src = photo.imagePath
+                            await new Promise(r => img.onload = r)
 
-            if (sessionFrame && videoUrls.some(v => v)) {
-                try {
-                    const overlayBlob = await (await fetch(`file://${sessionFrame.overlayPath}`)).blob()
-                    const overlayResult = await uploadFile('exports', `frame_${sessionId}_${timestamp}.png`, overlayBlob)
-                    if (overlayResult && 'url' in overlayResult) {
-                        frameOverlayUrl = overlayResult.url
-                        frameData = {
-                            canvasWidth: sessionFrame.canvasWidth,
-                            canvasHeight: sessionFrame.canvasHeight,
-                            overlayUrl: overlayResult.url,
-                            slots: sessionFrame.slots.map(slot => ({
-                                x: slot.x,
-                                y: slot.y,
-                                width: slot.width,
-                                height: slot.height,
-                                rotation: slot.rotation
-                            }))
+                            // Cover fit onto canvas exactly as shot
+                            const imgAspect = img.width / img.height
+                            const canvasAspect = gifCanvas.width / gifCanvas.height
+                            let dw = gifCanvas.width, dh = gifCanvas.height, dx = 0, dy = 0
+
+                            if (imgAspect > canvasAspect) {
+                                dh = gifCanvas.height
+                                dw = gifCanvas.height * imgAspect
+                                dx = (gifCanvas.width - dw) / 2
+                            } else {
+                                dw = gifCanvas.width
+                                dh = gifCanvas.width / imgAspect
+                                dy = (gifCanvas.height - dh) / 2
+                            }
+
+                            gctx.fillStyle = '#ffffff'
+                            gctx.fillRect(0, 0, gifCanvas.width, gifCanvas.height)
+                            gctx.drawImage(img, dx, dy, dw, dh)
+
+                            // Push frame as high-quality JPEG base64
+                            const frameDataUrl = gifCanvas.toDataURL('image/jpeg', 0.95)
+                            framesBase64.push(frameDataUrl)
+                        }
+
+                        // Generate true GIF using FFmpeg in backend
+                        if (window.api.system.generateHqGif) {
+                            const hqGifResult = await window.api.system.generateHqGif(framesBase64, 500)
+                            if (hqGifResult.success && hqGifResult.data) {
+                                gifDataUrl = hqGifResult.data
+                            } else {
+                                console.error('FFmpeg GIF Gen Failed:', hqGifResult.error)
+                            }
                         }
                     }
-                } catch (err) {
-                    console.error('Failed to upload frame overlay:', err)
+                } catch (e) {
+                    console.error('Failed to generate GIF:', e)
                 }
             }
 
-            // Save gallery data to Supabase for short URL access
-            const GALLERY_BASE_URL = 'https://sebooth-gallery.vercel.app'
+            // 1. Collect file references from the frontend
+            const photoRefs = photos.map((p, i) => ({
+                path: p.imagePath,
+                filename: `photo_${sessionId}_${i}_${timestamp}.jpg`
+            }))
 
-            // Save to database - gallery can fetch using session ID
-            const saveResult = await saveGallery({
+            const videoRefs: { path: string; filename: string }[] = []
+            let hasVideoRecordings = false;
+
+            if (sessionFrame) {
+                // Map videos to each slot exactly, supporting duplicates
+                for (const slot of sessionFrame.slots) {
+                    const sourceSlotId = slot.duplicateOfSlotId || slot.id
+                    const photoInfo = photos.find(p => p.slotId === sourceSlotId)
+
+                    if (photoInfo?.videoPath && !photoInfo.videoPath.startsWith('blob:')) {
+                        hasVideoRecordings = true;
+                        videoRefs.push({
+                            path: photoInfo.videoPath,
+                            filename: `video_${sessionId}_${slot.id}_${timestamp}.webm`
+                        })
+                    } else {
+                        videoRefs.push({ path: '', filename: '' }) // Maintain array alignment with slots
+                    }
+                }
+            } else {
+                // Fallback mapping if no sessionFrame 
+                const uniqueVideos = new Set<string>()
+                for (const photo of photos) {
+                    if (photo.videoPath && !photo.videoPath.startsWith('blob:') && !uniqueVideos.has(photo.videoPath)) {
+                        uniqueVideos.add(photo.videoPath)
+                        hasVideoRecordings = true;
+                        videoRefs.push({
+                            path: photo.videoPath,
+                            filename: `video_${sessionId}_${photo.slotId}_${timestamp}.webm`
+                        })
+                    }
+                }
+            }
+
+            const overlayRef = (sessionFrame && sessionFrame.overlayPath && hasVideoRecordings)
+                ? { path: sessionFrame.overlayPath, filename: `frame_${sessionId}_${timestamp}.png` }
+                : undefined
+
+            // 2. Save everything locally first! 
+            const localSaveRes = await window.api.system.saveSessionLocally({
                 sessionId,
-                photoStripUrl,
-                photoUrls,
-                videoUrls: videoUrls.some(v => v) ? videoUrls : undefined,
-                frameData
+                stripDataUrl: compositeDataUrl,
+                gifDataUrl: gifDataUrl || undefined,
+                photos: photoRefs,
+                videos: videoRefs,
+                overlay: overlayRef,
+                frameConfig: sessionFrame ? {
+                    width: sessionFrame.canvasWidth,
+                    height: sessionFrame.canvasHeight,
+                    slots: sessionFrame.slots.map(s => ({ width: s.width, height: s.height, x: s.x, y: s.y, rotation: s.rotation || 0 }))
+                } : undefined
             })
 
-            // Generate short URL with just session ID (much simpler QR code!)
-            if (photoStripUrl || photoUrls.length > 0) {
-                const shortUrl = `${GALLERY_BASE_URL}?s=${sessionId}`
-                setQrPhotoUrl(shortUrl)
-                // Save for email sending
-                setGalleryUrl(shortUrl)
-                setPhotoStripUrl(photoStripUrl || null)
-                setUploadedPhotoUrls(photoUrls)
-            } else {
-                setQrPhotoUrl(null)
+            if (!localSaveRes.success || !localSaveRes.data) {
+                throw new Error(localSaveRes.error || 'Failed to save session locally')
             }
+
+            const savedLocalFiles = localSaveRes.data
+
+            // LOCAL WIFI (OFFLINE) ROUTING 📶
+            if (config.sharingMode === 'local') {
+                console.log('Using Local WiFi Sharing mode.')
+                const ipRes = await window.api.system.getLocalIp()
+                if (ipRes.success && ipRes.data) {
+                    const localIp = ipRes.data
+                    const localUrl = `http://${localIp}:5050/gallery/${sessionId}`
+
+                    setQrPhotoUrl(localUrl)
+                    setGalleryUrl(localUrl)
+
+                    // The Express server serves these exact filenames directly out of the sessionId folder
+                    const uploadedStrip = savedLocalFiles.find((f: { filename: string }) => f.filename.startsWith('strip_'))
+                    setPhotoStripUrl(uploadedStrip ? `http://${localIp}:5050/Session_${sessionId}/${uploadedStrip.filename}` : null)
+
+                    const uploadedGif = savedLocalFiles.find((f: { filename: string }) => f.filename.startsWith('gif_'))
+                    setGifUrl(uploadedGif ? `http://${localIp}:5050/Session_${sessionId}/${uploadedGif.filename}` : null)
+
+                    const videoFile = savedLocalFiles.find((f: { filename: string }) => f.filename.startsWith('live_video_'))
+
+                    const uploadedPhotos = savedLocalFiles.filter((f: { filename: string }) => f.filename.startsWith('photo_')).map((f: { filename: string }) => `http://${localIp}:5050/Session_${sessionId}/${f.filename}`)
+                    setUploadedPhotoUrls(uploadedPhotos)
+
+                    await saveGallery({
+                        sessionId,
+                        photoStripUrl: uploadedStrip ? `http://${localIp}:5050/Session_${sessionId}/${uploadedStrip.filename}` : undefined,
+                        gifUrl: uploadedGif ? `http://${localIp}:5050/Session_${sessionId}/${uploadedGif.filename}` : undefined,
+                        livePhotoUrl: videoFile ? `http://${localIp}:5050/Session_${sessionId}/${videoFile.filename}` : undefined,
+                        photoUrls: uploadedPhotos
+                    })
+
+                    setIsGeneratingQR(false)
+                    return // Done successfully without cloud uploads!
+                } else {
+                    console.warn('Failed to get local IP for WiFi sharing, falling back to cloud.', ipRes.error)
+                }
+            }
+
+            // 3. Try uploading to Google Drive
+            try {
+                const driveRes = await window.api.drive.uploadSession({ sessionId, files: savedLocalFiles })
+
+                if (driveRes.success && driveRes.folderUrl) {
+                    // Google Drive upload succeeded!
+                    const driveFolderUrl = driveRes.folderUrl
+                    setQrPhotoUrl(driveFolderUrl)
+                    setGalleryUrl(driveFolderUrl)
+
+                    const uploadedStrip = driveRes.files?.find((f: { filename: string; url: string; id: string }) => f.filename.startsWith('strip_'))
+                    setPhotoStripUrl(uploadedStrip?.url || null)
+
+                    const uploadedGif = driveRes.files?.find((f: { filename: string; url: string; id: string }) => f.filename.startsWith('gif_'))
+                    setGifUrl(uploadedGif?.url || null)
+
+                    const uploadedVideo = driveRes.files?.find((f: { filename: string; url: string; id: string }) => f.filename.startsWith('live_video_'))
+
+                    const uploadedPhotos = driveRes.files?.filter((f: { filename: string; url: string; id: string }) => f.filename.startsWith('photo_')).map((f: { filename: string; url: string; id: string }) => f.url) || []
+                    setUploadedPhotoUrls(uploadedPhotos)
+
+                    await saveGallery({
+                        sessionId,
+                        photoStripUrl: uploadedStrip?.url,
+                        gifUrl: uploadedGif?.url,
+                        livePhotoUrl: uploadedVideo?.url,
+                        photoUrls: uploadedPhotos
+                    })
+
+                    setIsGeneratingQR(false)
+                    return // Done successfully
+                } else {
+                    console.warn('Drive upload failed, falling back to Supabase:', driveRes.error)
+                }
+            } catch (driveErr) {
+                console.warn('Drive upload threw error, falling back to Supabase:', driveErr)
+            }
+
+            // 4. Fallback to Supabase if Google Drive failed (e.g. 403 Forbidden)
+            console.log('Running Supabase upload fallback...')
+            let photoStripUrl: string | undefined
+            let gifFallbackUrl: string | undefined
+            let videoFallbackUrl: string | undefined
+            const photoUrls: string[] = []
+
+            for (const file of savedLocalFiles) {
+                try {
+                    // Read file securely via IPC bridge instead of browser fetch(file://) 
+                    const base64Res = await window.api.system.readFileAsBase64(file.path)
+                    if (!base64Res.success || !base64Res.data) {
+                        console.error('Failed to read file for Supabase fallback upload:', base64Res.error)
+                        continue
+                    }
+
+                    const fetchRes = await fetch(`data:${file.mimeType};base64,${base64Res.data}`)
+                    const blob = await fetchRes.blob()
+
+                    const uploadResult = await uploadFile('exports', file.filename, blob)
+
+                    if (uploadResult && 'url' in uploadResult) {
+                        if (file.filename.startsWith('strip_')) {
+                            photoStripUrl = uploadResult.url
+                        } else if (file.filename.startsWith('gif_')) {
+                            gifFallbackUrl = uploadResult.url
+                        } else if (file.filename.startsWith('live_video_')) {
+                            videoFallbackUrl = uploadResult.url
+                        } else if (file.filename.startsWith('photo_')) {
+                            photoUrls.push(uploadResult.url)
+                        }
+                    }
+                } catch (e) {
+                    console.error('Fallback upload failed for file:', file.filename, e)
+                }
+            }
+
+            // Fallback to direct photo strip URL since Vercel gallery is down
+            const fallbackUrl = photoStripUrl || photoUrls[0] || ''
+
+            setQrPhotoUrl(fallbackUrl)
+            setGalleryUrl(fallbackUrl)
+            setPhotoStripUrl(photoStripUrl || null)
+            setGifUrl(gifFallbackUrl || null)
+            setUploadedPhotoUrls(photoUrls)
+
+            await saveGallery({
+                sessionId,
+                photoStripUrl,
+                gifUrl: gifFallbackUrl,
+                livePhotoUrl: videoFallbackUrl,
+                photoUrls
+            })
+
         } catch (err) {
             console.error('QR generation error:', err)
             setQrPhotoUrl(null)
@@ -434,6 +564,7 @@ function PostProcessing(): JSX.Element {
     // Generate HTML gallery page content
     const generateGalleryHtml = (data: {
         photoStripUrl?: string
+        gifUrl?: string
         livePhotoUrl?: string
         photoUrls: string[]
         sessionId: string
@@ -574,8 +705,9 @@ function PostProcessing(): JSX.Element {
 
     <nav class="tabs">
         ${data.photoStripUrl ? '<button class="tab active" onclick="showSection(\'strip\')">🖼️ Photo Strip</button>' : ''}
-        ${data.livePhotoUrl ? '<button class="tab" onclick="showSection(\'live\')">📱 Live Photo</button>' : ''}
-        ${data.photoUrls.length > 0 ? '<button class="tab" onclick="showSection(\'photos\')">📷 Photos (' + data.photoUrls.length + ')</button>' : ''}
+        ${data.gifUrl ? `<button class="tab ${!data.photoStripUrl ? 'active' : ''}" onclick="showSection('gif')">✨ GIF</button>` : ''}
+        ${data.livePhotoUrl ? `<button class="tab ${!data.photoStripUrl && !data.gifUrl ? 'active' : ''}" onclick="showSection('live')">📱 Live Photo</button>` : ''}
+        ${data.photoUrls.length > 0 ? `<button class="tab ${!data.photoStripUrl && !data.gifUrl && !data.livePhotoUrl ? 'active' : ''}" onclick="showSection('photos')">📷 Photos (${data.photoUrls.length})</button>` : ''}
     </nav>
 
     <main class="content">
@@ -586,15 +718,22 @@ function PostProcessing(): JSX.Element {
         </section>
         ` : ''}
 
+        ${data.gifUrl ? `
+        <section id="gif" class="section ${!data.photoStripUrl ? 'active' : ''}">
+            <img src="${data.gifUrl}" alt="GIF Animation" class="main-media" onclick="openImage('${data.gifUrl}')">
+            <a href="${data.gifUrl}" download="animation.gif" class="download-btn">⬇️ Download GIF</a>
+        </section>
+        ` : ''}
+
         ${data.livePhotoUrl ? `
-        <section id="live" class="section">
+        <section id="live" class="section ${!data.photoStripUrl && !data.gifUrl ? 'active' : ''}">
             <video src="${data.livePhotoUrl}" autoplay loop muted playsinline class="main-media"></video>
             <a href="${data.livePhotoUrl}" download="livephoto.mp4" class="download-btn">⬇️ Download Live Photo</a>
         </section>
         ` : ''}
 
         ${data.photoUrls.length > 0 ? `
-        <section id="photos" class="section">
+        <section id="photos" class="section ${!data.photoStripUrl && !data.gifUrl && !data.livePhotoUrl ? 'active' : ''}">
             <div class="photos-grid">
                 ${photosHtml}
             </div>
@@ -917,16 +1056,18 @@ function PostProcessing(): JSX.Element {
             <EmailModal
                 isOpen={showEmailModal}
                 onClose={() => setShowEmailModal(false)}
-                onSend={handleSendEmail}
-                isSending={isSendingEmail}
+                onSubmit={async (email) => { await handleSendEmail(email) }}
             />
 
-            {/* QR Code Modal */}
+            {/* QR Code Modal (2-Step for Offline Sharing) */}
             <QRCodeModal
                 isOpen={showQRModal}
                 onClose={() => setShowQRModal(false)}
                 photoUrl={qrPhotoUrl}
                 isGenerating={isGeneratingQR}
+                wifiSsid={config.wifiSsid}
+                wifiPassword={config.wifiPassword}
+                isLocalMode={config.sharingMode === 'local'}
             />
         </motion.div>
     )

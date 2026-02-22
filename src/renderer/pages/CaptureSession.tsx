@@ -224,9 +224,28 @@ function CaptureSession(): JSX.Element {
         // Helper to complete capture after optional video save
         const completeCapture = (videoUrl?: string) => {
             // Small delay for flash effect
-            setTimeout(() => {
-                // Capture from webcam
-                const dataUrl = captureFromWebcam()
+            setTimeout(async () => {
+                let dataUrl: string | null = null;
+
+                // Attempt native DSLR capture first
+                try {
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    const windowApi = (window as any).api;
+                    if (windowApi && windowApi.camera && windowApi.camera.capture) {
+                        const captureRes = await windowApi.camera.capture(slot?.id);
+                        if (captureRes.success && captureRes.data && captureRes.data.imagePath) {
+                            // Convert physical path to local file URL
+                            dataUrl = `file:///${captureRes.data.imagePath.replace(/\\/g, '/')}`;
+                        }
+                    }
+                } catch (e) {
+                    console.warn('Native camera capture failed, falling back to webcam:', e);
+                }
+
+                // Fallback to webcam screenshot if native capture failed or is unavailable
+                if (!dataUrl) {
+                    dataUrl = captureFromWebcam()
+                }
 
                 if (dataUrl) {
                     setLastCapturedImage(dataUrl)
@@ -260,11 +279,34 @@ function CaptureSession(): JSX.Element {
             const recorder = mediaRecorderRef.current
 
             // Set up onstop to create blob after all data is collected
-            recorder.onstop = () => {
+            recorder.onstop = async () => {
                 if (videoChunksRef.current.length > 0) {
-                    const videoBlob = new Blob(videoChunksRef.current, { type: 'video/webm' })
-                    const videoDataUrl = URL.createObjectURL(videoBlob)
-                    completeCapture(videoDataUrl)
+                    const mimeType = recorder.mimeType.split(';')[0] || 'video/webm'
+                    const ext = mimeType === 'video/mp4' ? 'mp4' : 'webm'
+                    const videoBlob = new Blob(videoChunksRef.current, { type: mimeType })
+
+                    try {
+                        // Convert blob to base64 data URL so we can save it to temp disk
+                        const reader = new FileReader();
+                        reader.readAsDataURL(videoBlob);
+                        reader.onloadend = async () => {
+                            const base64data = reader.result as string;
+                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                            const windowApi = (window as any).api;
+                            const tempPathRes = await windowApi.system.saveDataUrl(base64data, `temp_video_${Date.now()}.${ext}`);
+
+                            if (tempPathRes.success && tempPathRes.data) {
+                                completeCapture(`file:///${tempPathRes.data.replace(/\\/g, '/')}`);
+                            } else {
+                                console.error('Failed to save temp video:', tempPathRes.error);
+                                // Fallback to blob if temp save fails (though backend can't read it later)
+                                completeCapture(URL.createObjectURL(videoBlob));
+                            }
+                        }
+                    } catch (e) {
+                        console.error('Error saving video blob:', e);
+                        completeCapture(URL.createObjectURL(videoBlob));
+                    }
                 } else {
                     completeCapture()
                 }

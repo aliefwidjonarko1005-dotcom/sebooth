@@ -6,6 +6,7 @@ import { registerPrinterHandlers } from './ipc/printer.ipc'
 import { registerSystemHandlers } from './ipc/system.ipc'
 import { registerImageHandlers } from './ipc/image.ipc'
 import { registerEmailHandlers } from './ipc/email.ipc'
+import { registerDriveHandlers } from './ipc/drive.ipc'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -61,6 +62,12 @@ app.whenReady().then(() => {
     registerSystemHandlers(ipcMain)
     registerImageHandlers(ipcMain)
     registerEmailHandlers(ipcMain)
+    registerDriveHandlers(ipcMain)
+
+    // Launch background sharing web server (port 5050)
+    import('./server').then(({ startLocalServer }) => {
+        startLocalServer(5050)
+    }).catch(err => console.error('Failed to start local sharing server:', err))
 
     createWindow()
 

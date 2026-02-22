@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import QRCode from 'react-qr-code'
 import { motion, AnimatePresence } from 'framer-motion'
 import styles from './QRCodeModal.module.css'
@@ -8,10 +8,29 @@ interface QRCodeModalProps {
     onClose: () => void
     photoUrl: string | null
     isGenerating: boolean
+    wifiSsid?: string
+    wifiPassword?: string
+    isLocalMode?: boolean
 }
 
-export function QRCodeModal({ isOpen, onClose, photoUrl, isGenerating }: QRCodeModalProps): JSX.Element | null {
+export function QRCodeModal({ isOpen, onClose, photoUrl, isGenerating, wifiSsid, wifiPassword, isLocalMode }: QRCodeModalProps): JSX.Element | null {
+    const [step, setStep] = useState<'wifi' | 'gallery'>('gallery')
+
+    useEffect(() => {
+        if (isOpen) {
+            // Start at the WiFi step if local sharing is active and an SSID is configured
+            if (isLocalMode && wifiSsid) {
+                setStep('wifi')
+            } else {
+                setStep('gallery')
+            }
+        }
+    }, [isOpen, isLocalMode, wifiSsid])
+
     if (!isOpen) return null
+
+    // Format for iOS/Android WiFi Auto-Connect: WIFI:S:<SSID>;T:WPA;P:<Password>;;
+    const wifiQrData = `WIFI:S:${wifiSsid || ''};T:WPA;P:${wifiPassword || ''};;`
 
     return (
         <AnimatePresence>
@@ -33,15 +52,39 @@ export function QRCodeModal({ isOpen, onClose, photoUrl, isGenerating }: QRCodeM
                         ×
                     </button>
 
-                    <h2 className={styles.title}>📱 Scan QR Code</h2>
-                    <p className={styles.subtitle}>Scan to view your photo on your device</p>
+                    <h2 className={styles.title}>
+                        {step === 'wifi' ? 'Step 1: Connect WiFi' : '📱 Scan QR Code'}
+                    </h2>
+                    <p className={styles.subtitle}>
+                        {step === 'wifi'
+                            ? 'Scan this QR code to connect to the photo booth WiFi'
+                            : 'Scan to view your photo on your device'}
+                    </p>
 
                     <div className={styles.qrContainer}>
-                        {isGenerating ? (
+                        {isGenerating && step === 'gallery' ? (
                             <div className={styles.loading}>
                                 <span className={styles.spinner}></span>
                                 <p>Uploading photo...</p>
                             </div>
+                        ) : step === 'wifi' ? (
+                            <>
+                                <div className={styles.qrWrapper}>
+                                    <QRCode
+                                        value={wifiQrData}
+                                        size={320}
+                                        level="M"
+                                        bgColor="#ffffff"
+                                        fgColor="#000000"
+                                    />
+                                </div>
+                                <p className={styles.hint}>
+                                    Network: {wifiSsid}
+                                </p>
+                                <button className={styles.continueBtn} onClick={() => setStep('gallery')}>
+                                    Sudah Connect? Lanjutkan →
+                                </button>
+                            </>
                         ) : photoUrl ? (
                             <>
                                 <div className={styles.qrWrapper}>

@@ -1,5 +1,7 @@
-import { IpcMain } from 'electron'
+import { IpcMain, app } from 'electron'
 import nodemailer from 'nodemailer'
+import { join } from 'path'
+import { existsSync, readdirSync } from 'fs'
 import { config } from 'dotenv'
 
 // Load environment variables
@@ -35,27 +37,8 @@ export function registerEmailHandlers(ipcMain: IpcMain): void {
                 }
             })
 
-            // Build attachments from URLs
-            const attachments: nodemailer.SendMailOptions['attachments'] = []
-
-            // Add photo strip
-            if (params.photoStripUrl) {
-                attachments.push({
-                    filename: 'photo_strip.jpg',
-                    path: params.photoStripUrl
-                })
-            }
-
-            // Add individual photos
-            if (params.photoUrls && params.photoUrls.length > 0) {
-                for (let i = 0; i < params.photoUrls.length; i++) {
-                    attachments.push({
-                        filename: `photo_${i + 1}.jpg`,
-                        path: params.photoUrls[i]
-                    })
-                }
-            }
-
+            // We no longer attach files directly because they are stored in Google Drive
+            // The user will instead receive a link to the Google Drive folder.
             // Email HTML content
             const htmlContent = `
 <!DOCTYPE html>
@@ -110,17 +93,11 @@ export function registerEmailHandlers(ipcMain: IpcMain): void {
 <body>
     <div class="container">
         <h1>📸 Your Sebooth Photos!</h1>
-        <p>Thank you for using Sebooth! Your photos are attached to this email.</p>
+        <p>Thank you for using Sebooth! Your photos have been uploaded to Google Drive.</p>
         
-        <p>You can also view your photos online, including the Live Photo and GIF preview:</p>
+        <p>You can view and download all your original high-resolution photos, Live Photos, and GIFs attached to this email!</p>
         
-        <a href="${params.galleryUrl}" class="gallery-btn">🖼️ View Gallery Online</a>
-        
-        <p style="font-size: 14px; margin-top: 20px;">
-            <strong>Attached Files:</strong><br>
-            ${params.photoStripUrl ? '• Photo Strip (photo_strip.jpg)<br>' : ''}
-            ${params.photoUrls ? `• ${params.photoUrls.length} Individual Photo(s)<br>` : ''}
-        </p>
+        <a href="${params.galleryUrl}" class="gallery-btn">📁 Open Online Gallery</a>
         
         <div class="footer">
             <p>Session ID: ${params.sessionId}</p>
@@ -131,13 +108,32 @@ export function registerEmailHandlers(ipcMain: IpcMain): void {
 </html>
 `
 
+            // Gather local files as attachments
+            const attachments: { filename: string; path: string }[] = []
+            try {
+                const documentsPath = app.getPath('documents')
+                const sessionPath = join(documentsPath, 'Sebooth', 'Sessions', `Session_${params.sessionId}`)
+
+                if (existsSync(sessionPath)) {
+                    const files = readdirSync(sessionPath)
+                    for (const file of files) {
+                        attachments.push({
+                            filename: file,
+                            path: join(sessionPath, file)
+                        })
+                    }
+                }
+            } catch (fsErr) {
+                console.warn('Failed to attach physical files:', fsErr)
+            }
+
             // Send email
             const info = await transporter.sendMail({
                 from: `"Sebooth Photos" <${GMAIL_USER}>`,
                 to: params.to,
                 subject: '📸 Your Sebooth Photos Are Ready!',
                 html: htmlContent,
-                attachments: attachments.length > 0 ? attachments : undefined
+                attachments
             })
 
             console.log('Email sent:', info.messageId)

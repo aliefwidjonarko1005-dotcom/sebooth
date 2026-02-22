@@ -94,6 +94,9 @@ export interface AppConfig {
     midtransServerKey: string // Midtrans server key for API
     paymentInstructions: string // Payment instructions displayed to user
     paymentTimeout: number // seconds - timeout for payment page
+
+    // Sharing
+    sharingMode: 'cloud' | 'local' // Cloud (Drive/Supabase) or Local WiFi (DSLRBooth mode)
 }
 
 export interface LUTFilter {
@@ -125,6 +128,7 @@ export type SystemIPCChannels =
     | 'system:open-file-dialog'
     | 'system:get-temp-path'
     | 'system:save-file'
+    | 'system:generate-hq-gif'
 
 export type ImageIPCChannels =
     | 'image:composite'
